@@ -30,6 +30,8 @@ curl -s http://127.0.0.1:8000/chat \
 curl -s "http://127.0.0.1:8000/search?q=thorium%20reactors"
 curl -s "http://127.0.0.1:8000/fetch?url=https://arxiv.org/abs/2407.12345"
 
+The fetch endpoint automatically extracts text from PDFs and can pull transcripts from YouTube videos.
+
 ## Mode 2 — Tiny trainer
 Your original model.py stays. Run: python model.py
 
