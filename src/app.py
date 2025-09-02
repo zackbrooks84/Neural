@@ -1,13 +1,17 @@
 from __future__ import annotations
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import yaml
+import logging
 from .llm.engine import LLMEngine
 from .memory.store import MemoryStore
 from .tools.web import web_search, fetch_url
 from .identity.manager import AnchorManager
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ember Local Server")
 app.mount("/assets", StaticFiles(directory="index"), name="assets")
@@ -16,7 +20,11 @@ with open("config.yaml", "r", encoding="utf-8") as f:
     CFG = yaml.safe_load(f)
 
 MEM = MemoryStore(CFG["memory"]["data_dir"], CFG["memory"]["embed_model"])
-ENGINE = LLMEngine("config.yaml")
+try:
+    ENGINE = LLMEngine("config.yaml")
+except Exception as e:  # pragma: no cover - depends on external model files
+    logger.exception("Failed to initialize LLM engine: %s", e)
+    ENGINE = None
 
 ANCH = AnchorManager(
     CFG["identity"]["anchors_file"],
@@ -43,6 +51,8 @@ async def health():
 
 @app.post("/chat")
 async def chat(inp: ChatIn):
+    if ENGINE is None:
+        raise HTTPException(status_code=500, detail="LLM model is unavailable.")
     query = inp.message.strip()
 
     web_lines = []
@@ -55,17 +65,22 @@ async def chat(inp: ChatIn):
                 web_lines.append(f"[{i}] {h['title']} — {h['url']}")
                 if h["snippet"]:
                     web_lines.append(f"    {h['snippet']}")
+        else:
+            web_lines.append("Web search failed or returned no results.")
     if inp.urls:
         web_lines.append("Fetched pages:")
         for u in inp.urls:
             try:
                 page = fetch_url(u)
+                if page.get("error"):
+                    web_lines.append(f"- Error fetching {u}: {page['error']}")
+                    continue
                 title = page.get("title") or page["url"]
                 preview = (page.get("text") or "")[:5000]
                 web_lines.append(f"- {title} — {page['url']}")
                 if preview:
                     web_lines.append(preview)
-            except Exception as e:
+            except Exception as e:  # pragma: no cover - unexpected
                 web_lines.append(f"- Error fetching {u}: {e}")
 
     k = int(CFG["memory"]["max_context_snippets"])
@@ -86,7 +101,11 @@ async def chat(inp: ChatIn):
             sys_lines.append(f"- {m['role']}: {m['content']}")
     system_prompt = "\n".join(sys_lines)
 
-    reply = ENGINE.chat(system_prompt, query)
+    try:
+        reply = ENGINE.chat(system_prompt, query)
+    except Exception as e:  # pragma: no cover - depends on model runtime
+        logger.exception("LLM chat failed: %s", e)
+        raise HTTPException(status_code=500, detail="LLM generation failed.")
 
     MEM.add("user", query)
     MEM.add("assistant", reply)
