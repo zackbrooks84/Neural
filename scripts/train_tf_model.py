@@ -1,5 +1,9 @@
 import os
 import socket
+
+# Enable dynamic GPU memory allocation to avoid reserving all memory upfront.
+os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
+
 import tensorflow as tf
 
 
@@ -8,7 +12,6 @@ def configure_environment():
     if os.environ.get("RESTRICTED_ENV"):
         print("Restricted environment detected. Falling back to CPU and limiting GPU memory usage.")
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
-        os.environ.setdefault("TF_FORCE_GPU_ALLOW_GROWTH", "true")
         try:
             tf.config.set_visible_devices([], "GPU")
         except Exception:
