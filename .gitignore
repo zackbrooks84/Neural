@@ -1,0 +1,10 @@
+# Ignore Python cache and compiled files
+__pycache__/
+*.pyc
+
+# Ignore model weights and local memory
+*.gguf
+memory/
+
+# Local configuration overrides
+config/local.yaml
