@@ -12,6 +12,7 @@ Local LLM server with memory and identity anchors. Plus a tiny Transformer demo 
 7. Test:
    curl -s http://localhost:8000/health
    curl -s http://localhost:8000/chat -H "Content-Type: application/json" -d '{"message":"Say hi in one sentence"}'
+8. Open http://localhost:8000/ in a browser for a simple web chat interface
 
 Customize identity in src/identity/anchors.yaml
 
