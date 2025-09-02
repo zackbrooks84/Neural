@@ -17,3 +17,15 @@ identity:
   anchors_file: "src/identity/anchors.yaml"
   anchors_per_query: 2
   anchor_injection: "every_query"
+
+web:
+  # Domains that are allowed for URL fetching. Empty list allows none.
+  allowed_domains:
+    - example.com
+  # Restrict fetched files to these extensions. Empty string allows URLs
+  # without an explicit extension.
+  allowed_file_extensions:
+    - ""
+    - .html
+    - .txt
+    - .pdf

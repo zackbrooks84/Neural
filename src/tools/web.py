@@ -1,4 +1,4 @@
-import httpx, re, time, logging
+import httpx, re, time, logging, os, yaml
 from duckduckgo_search import DDGS
 import trafilatura
 from readability import Document
@@ -17,6 +17,18 @@ MAX_BYTES = 2_500_000
 MAX_TEXT = 120_000
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
+
+try:
+    with open("config.yaml", "r", encoding="utf-8") as f:
+        _cfg = yaml.safe_load(f)
+        _web_cfg = _cfg.get("web", {})
+except Exception:  # pragma: no cover - config may be missing
+    _web_cfg = {}
+
+ALLOWED_DOMAINS = set(_web_cfg.get("allowed_domains") or [])
+ALLOWED_EXTENSIONS = set(_web_cfg.get("allowed_file_extensions") or [])
+# Always allow URLs without an explicit extension
+ALLOWED_EXTENSIONS.add("")
 
 def web_search(query: str, max_results: int = 8):
     """DuckDuckGo search with simple retry and graceful fallback."""
@@ -45,6 +57,14 @@ def fetch_url(url: str) -> dict:
     """Download a URL with retries and basic error handling."""
     if not re.match(r"^https?://", url):
         url = "https://" + url
+    parsed = urlparse(url)
+    domain = parsed.hostname or ""
+    if ALLOWED_DOMAINS and domain not in ALLOWED_DOMAINS:
+        return {"url": url, "status": None, "title": "", "text": "", "error": "domain not allowed"}
+    ext = os.path.splitext(parsed.path)[1].lower()
+    if ALLOWED_EXTENSIONS and ext not in ALLOWED_EXTENSIONS:
+        return {"url": url, "status": None, "title": "", "text": "", "error": "file type not allowed"}
+    url = parsed.geturl()
     headers = {"User-Agent": UA, "Accept": "*/*"}
     last_exc: Exception | None = None
     for attempt in range(MAX_RETRIES):
