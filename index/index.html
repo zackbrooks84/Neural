@@ -9,8 +9,14 @@
   <div id="chat-container">
     <h1>Ember Chat</h1>
     <div id="chat-box"></div>
-    <input id="message" type="text" placeholder="Type a message" />
-    <button id="send">Send</button>
+    <div id="options">
+      <label><input type="checkbox" id="use-web" /> Enable web search</label>
+      <input id="web-query" type="text" placeholder="Custom web query (optional)" />
+    </div>
+    <div id="input-bar">
+      <input id="message" type="text" placeholder="Type a message" />
+      <button id="send">Send</button>
+    </div>
   </div>
   <script src="/assets/main.js"></script>
 </body>
