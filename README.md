@@ -16,6 +16,20 @@ Local LLM server with memory and identity anchors. Plus a tiny Transformer demo 
 
 Customize identity in src/identity/anchors.yaml
 
+### Internet search in chat
+curl -s http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"What is new at Gobekli Tepe?", "use_web": true}'
+
+### Fetch specific URLs
+curl -s http://127.0.0.1:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Summarize these pages", "urls":["https://example.com/a","https://example.com/b"]}'
+
+### Direct search/fetch
+curl -s "http://127.0.0.1:8000/search?q=thorium%20reactors"
+curl -s "http://127.0.0.1:8000/fetch?url=https://arxiv.org/abs/2407.12345"
+
 ## Mode 2 — Tiny trainer
 Your original model.py stays. Run: python model.py
 
