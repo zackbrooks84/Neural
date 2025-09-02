@@ -1,5 +1,8 @@
-fastapi
-uvicorn
-pyyaml
-llama-cpp-python
-httpx
+fastapi==0.115.0
+uvicorn==0.30.6
+pydantic==2.9.0
+pyyaml==6.0.2
+faiss-cpu==1.8.0.post1
+sentence-transformers==3.0.1
+llama-cpp-python==0.3.2
+tenacity==9.0.0
