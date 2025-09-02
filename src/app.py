@@ -1,11 +1,14 @@
 from __future__ import annotations
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import yaml
 from .llm.engine import LLMEngine
 from .memory.store import MemoryStore
 
 app = FastAPI(title="Ember Local Server")
+app.mount("/assets", StaticFiles(directory="index"), name="assets")
 
 with open("config.yaml", "r", encoding="utf-8") as f:
     CFG = yaml.safe_load(f)
@@ -50,3 +53,8 @@ async def chat(inp: ChatIn):
     MEM.add("assistant", reply)
 
     return {"reply": reply}
+
+
+@app.get("/")
+async def root():
+    return FileResponse("index/index.html")
