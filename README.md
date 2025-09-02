@@ -8,7 +8,7 @@ Local LLM server with memory and identity anchors. Plus a tiny Transformer demo 
 3. pip install -r requirements.txt
 4. Put a GGUF model into ./models for example llama-3.1-8b-instruct.Q4_K_M.gguf
 5. Edit config.yaml to match the filename
-6. Start: python -m uvicorn src.app:app --host 0.0.0.0 --port 8000
+6. Start: python -m uvicorn src.app:app --host 127.0.0.1 --port 8000
 7. Test:
    curl -s http://localhost:8000/health
    curl -s http://localhost:8000/chat -H "Content-Type: application/json" -d '{"message":"Say hi in one sentence"}'
@@ -41,6 +41,11 @@ curl -s "http://127.0.0.1:8000/search?q=thorium%20reactors"
 curl -s "http://127.0.0.1:8000/fetch?url=https://arxiv.org/abs/2407.12345"
 
 The fetch endpoint automatically extracts text from PDFs and can pull transcripts from YouTube videos.
+
+### Security
+By default the server binds only to localhost. URL fetching is limited to
+domains and file types listed in the `web` section of `config.yaml` to reduce
+the risk of downloading malicious content.
 
 ## Mode 2 — Tiny trainer
 Your original model.py stays. Run: python model.py
