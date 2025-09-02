@@ -3,10 +3,11 @@ const API_KEY = 'api-base';
 let history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
 let apiBase = localStorage.getItem(API_KEY);
 if (!apiBase) {
+  const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
   if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-    apiBase = window.location.origin;
+    apiBase = `${proto}//${window.location.host}`;
   } else {
-    apiBase = "http://localhost:8000";
+    apiBase = `${proto}//localhost:8000`;
   }
   localStorage.setItem(API_KEY, apiBase);
 }
@@ -43,13 +44,20 @@ async function sendMessage() {
     payload.use_web = true;
     if (webQuery) payload.web_query = webQuery;
   }
-  const res = await fetch(`${apiBase}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  history.push({ user: msg, assistant: data.reply });
+  try {
+    const res = await fetch(`${apiBase}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    history.push({ user: msg, assistant: data.reply });
+  } catch (err) {
+    history.push({ user: msg, assistant: `Error: ${err.message}` });
+  }
   localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
   renderHistory();
   input.value = '';
