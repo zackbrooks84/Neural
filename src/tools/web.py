@@ -6,6 +6,7 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
 from io import BytesIO
 from pypdf import PdfReader
+from functools import lru_cache
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +31,9 @@ ALLOWED_EXTENSIONS = set(_web_cfg.get("allowed_file_extensions") or [])
 # Always allow URLs without an explicit extension
 ALLOWED_EXTENSIONS.add("")
 
+@lru_cache(maxsize=32)
 def web_search(query: str, max_results: int = 8):
-    """DuckDuckGo search with simple retry and graceful fallback."""
+    """DuckDuckGo search with simple retry, caching and graceful fallback."""
     last_exc: Exception | None = None
     for attempt in range(MAX_RETRIES):
         try:
