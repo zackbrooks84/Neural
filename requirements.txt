@@ -13,4 +13,5 @@ trafilatura==1.12.2
 readability-lxml==0.8.1
 youtube-transcript-api==1.2.2
 pypdf==6.0.0
-tensorflow==2.16.1
+tf-keras==2.19.0
+tensorflow==2.19.1
