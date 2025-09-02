@@ -8,12 +8,16 @@ __pycache__/
 
 # Virtual environment
 venv/
+.venv/
 
 # Ignore generated model and data artifacts
-models/*
-!models/.gitkeep
-data/*
-!data/.gitkeep
+models/
+data/*.index
+/data/faiss.index
+/data/memory.jsonl
+
+# Environment variables
+.env
 
 # Local configuration overrides
 config/local.yaml
