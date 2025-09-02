@@ -1,7 +1,15 @@
 const HISTORY_KEY = 'chat-history';
 const API_KEY = 'api-base';
 let history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
-let apiBase = localStorage.getItem(API_KEY) || '';
+let apiBase = localStorage.getItem(API_KEY);
+if (!apiBase) {
+  if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    apiBase = window.location.origin;
+  } else {
+    apiBase = "http://localhost:8000";
+  }
+  localStorage.setItem(API_KEY, apiBase);
+}
 
 function renderHistory() {
   const box = document.getElementById('chat-box');
