@@ -17,17 +17,37 @@ body {
   padding: 10px;
   margin-bottom: 10px;
 }
+
 .user {
   text-align: right;
   color: #333;
 }
+
 .assistant {
   text-align: left;
   color: #0066cc;
 }
-#message {
-  width: calc(100% - 60px);
+
+#options {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
 }
+
+#options #web-query {
+  flex: 1;
+}
+
+#input-bar {
+  display: flex;
+  gap: 10px;
+}
+
+#input-bar #message {
+  flex: 1;
+}
+
 #send {
-  width: 50px;
+  width: 60px;
 }
