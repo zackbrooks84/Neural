@@ -2,8 +2,9 @@ model:
   model_dir: "models"
   model_path: "llama-3.1-8b-instruct.Q4_K_M.gguf"
   n_ctx: 4096
-  n_threads: 6
-  n_gpu_layers: 0
+  n_threads: null
+  n_gpu_layers: null
+  use_mmap: true
   temperature: 0.7
   top_p: 0.95
 

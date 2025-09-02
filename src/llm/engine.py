@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
-from llama_cpp import Llama
+import os
+from llama_cpp import Llama, llama_supports_gpu_offload
 import yaml
 
 
@@ -12,13 +13,35 @@ class LLMEngine:
         model_file = Path(m["model_dir"]) / m["model_path"]
         if not model_file.exists():
             raise FileNotFoundError(f"Model file not found: {model_file}")
-        self.llm = Llama(
+
+        # Determine CPU threads dynamically if not specified
+        threads = m.get("n_threads")
+        if threads is None or threads <= 0:
+            threads = os.cpu_count() or 1
+
+        # Determine GPU layer offloading dynamically
+        gpu_layers = m.get("n_gpu_layers")
+        if gpu_layers is None:
+            gpu_layers = -1 if llama_supports_gpu_offload() else 0
+
+        llm_kwargs = dict(
             model_path=str(model_file),
             n_ctx=m.get("n_ctx", 4096),
-            n_threads=m.get("n_threads", 4),
-            n_gpu_layers=m.get("n_gpu_layers", 0),
+            n_threads=threads,
+            n_gpu_layers=gpu_layers,
             verbose=False,
+            use_mmap=m.get("use_mmap", True),
         )
+
+        # Retry without memory mapping if disk I/O is limited
+        try:
+            self.llm = Llama(**llm_kwargs)
+        except OSError:
+            if llm_kwargs.get("use_mmap", True):
+                llm_kwargs["use_mmap"] = False
+                self.llm = Llama(**llm_kwargs)
+            else:
+                raise
         self.temp = float(m.get("temperature", 0.7))
         self.top_p = float(m.get("top_p", 0.95))
 
