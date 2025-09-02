@@ -7,6 +7,7 @@ import yaml
 from .llm.engine import LLMEngine
 from .memory.store import MemoryStore
 from .tools.web import web_search, fetch_url
+from .identity.manager import AnchorManager
 
 app = FastAPI(title="Ember Local Server")
 app.mount("/assets", StaticFiles(directory="index"), name="assets")
@@ -17,8 +18,11 @@ with open("config.yaml", "r", encoding="utf-8") as f:
 MEM = MemoryStore(CFG["memory"]["data_dir"], CFG["memory"]["embed_model"])
 ENGINE = LLMEngine("config.yaml")
 
-with open(CFG["identity"]["anchors_file"], "r", encoding="utf-8") as f:
-    ANCH = yaml.safe_load(f)
+ANCH = AnchorManager(
+    CFG["identity"]["anchors_file"],
+    anchors_per_query=CFG["identity"].get("anchors_per_query"),
+    injection_mode=CFG["identity"].get("anchor_injection", "every_query"),
+)
 
 
 class ChatIn(BaseModel):
@@ -26,6 +30,10 @@ class ChatIn(BaseModel):
     use_web: bool = Field(default=False)
     web_query: str | None = None
     urls: list[str] | None = None
+
+
+class AnchorIn(BaseModel):
+    anchor: str
 
 
 @app.get("/health")
@@ -64,10 +72,10 @@ async def chat(inp: ChatIn):
     snippets = MEM.search(query, k=k)
 
     sys_lines = [
-        f"You are {ANCH.get('system_name','Ember')}.",
+        f"You are {ANCH.system_name}.",
         "Stay truthful, loyal, concise, and warm.",
     ]
-    for a in ANCH.get("anchors", []):
+    for a in ANCH.get_for_prompt():
         sys_lines.append(a)
     if web_lines:
         sys_lines.append("\n".join(web_lines))
@@ -84,6 +92,17 @@ async def chat(inp: ChatIn):
     MEM.add("assistant", reply)
 
     return {"reply": reply}
+
+
+@app.get("/anchors")
+async def get_anchors():
+    return {"anchors": ANCH.list_anchors()}
+
+
+@app.post("/anchors")
+async def add_anchor(inp: AnchorIn):
+    ANCH.add_anchor(inp.anchor)
+    return {"anchors": ANCH.list_anchors()}
 
 
 @app.get("/")

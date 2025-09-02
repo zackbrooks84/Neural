@@ -15,6 +15,16 @@ Local LLM server with memory and identity anchors. Plus a tiny Transformer demo 
 8. Open http://localhost:8000/ in a browser for a simple web chat interface
 
 Customize identity in src/identity/anchors.yaml
+Run-time anchors can also be managed via the API:
+
+```
+curl -s http://localhost:8000/anchors            # list anchors
+curl -s -X POST http://localhost:8000/anchors \
+  -H "Content-Type: application/json" \
+  -d '{"anchor":"Ember loves open source"}'
+```
+Anchors are rotated per query and may be injected only at session start
+depending on `anchor_injection` and `anchors_per_query` in config.yaml.
 
 ### Internet search in chat
 curl -s http://127.0.0.1:8000/chat \
