@@ -4,7 +4,16 @@ __pycache__/
 
 # Ignore model weights and local memory
 *.gguf
-memory/
+/memory/
+
+# Virtual environment
+venv/
+
+# Ignore generated model and data artifacts
+models/*
+!models/.gitkeep
+data/*
+!data/.gitkeep
 
 # Local configuration overrides
 config/local.yaml
