@@ -1,8 +1,11 @@
 from __future__ import annotations
 from pathlib import Path
 import os
+import logging
 from llama_cpp import Llama, llama_supports_gpu_offload
 import yaml
+
+logger = logging.getLogger(__name__)
 
 
 class LLMEngine:
@@ -36,24 +39,33 @@ class LLMEngine:
         # Retry without memory mapping if disk I/O is limited
         try:
             self.llm = Llama(**llm_kwargs)
-        except OSError:
+        except OSError as e:
             if llm_kwargs.get("use_mmap", True):
+                logger.warning("Loading model with mmap failed, retrying without mmap: %s", e)
                 llm_kwargs["use_mmap"] = False
                 self.llm = Llama(**llm_kwargs)
             else:
+                logger.exception("Failed to load model: %s", e)
                 raise
+        except Exception as e:
+            logger.exception("Failed to load model: %s", e)
+            raise
         self.temp = float(m.get("temperature", 0.7))
         self.top_p = float(m.get("top_p", 0.95))
 
     def chat(self, system: str, user: str) -> str:
         prompt = self._format(system, user)
-        out = self.llm.create_completion(
-            prompt=prompt,
-            max_tokens=512,
-            temperature=self.temp,
-            top_p=self.top_p,
-            stop=["</assistant>"]
-        )
+        try:
+            out = self.llm.create_completion(
+                prompt=prompt,
+                max_tokens=512,
+                temperature=self.temp,
+                top_p=self.top_p,
+                stop=["</assistant>"]
+            )
+        except Exception as e:
+            logger.exception("LLM completion failed: %s", e)
+            raise
         text = out["choices"][0]["text"].strip()
         return text
 

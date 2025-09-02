@@ -1,4 +1,4 @@
-import httpx, re, time
+import httpx, re, time, logging
 from duckduckgo_search import DDGS
 import trafilatura
 from readability import Document
@@ -6,6 +6,8 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
 from io import BytesIO
 from pypdf import PdfReader
+
+logger = logging.getLogger(__name__)
 
 UA = "NeuralLocalBrowser/1.0"
 # More aggressive connect timeout to fail fast on network issues while
@@ -18,6 +20,7 @@ RETRY_DELAY = 1.0
 
 def web_search(query: str, max_results: int = 8):
     """DuckDuckGo search with simple retry and graceful fallback."""
+    last_exc: Exception | None = None
     for attempt in range(MAX_RETRIES):
         try:
             with DDGS() as ddgs:
@@ -30,9 +33,12 @@ def web_search(query: str, max_results: int = 8):
                         "snippet": (h.get("body", "") or "")[:500],
                     })
                 return out
-        except Exception:
+        except Exception as e:  # pragma: no cover - network failure hard to simulate
+            last_exc = e
+            logger.warning("web_search attempt %s failed: %s", attempt + 1, e)
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
+    logger.error("web_search failed for query %r: %s", query, last_exc)
     return []
 
 def fetch_url(url: str) -> dict:
@@ -56,19 +62,22 @@ def fetch_url(url: str) -> dict:
                 }
         except Exception as e:
             last_exc = e
+            logger.warning("fetch_url attempt %s for %s failed: %s", attempt + 1, url, e)
             if attempt < MAX_RETRIES - 1:
                 time.sleep(RETRY_DELAY)
     # Fallback result when all retries failed
     status = None
     if isinstance(last_exc, httpx.HTTPStatusError) and last_exc.response is not None:
         status = last_exc.response.status_code
-    return {"url": url, "status": status, "title": "", "text": ""}
+    logger.error("fetch_url failed for %s: %s", url, last_exc)
+    return {"url": url, "status": status, "title": "", "text": "", "error": str(last_exc) if last_exc else ""}
 
 def extract_title(content: bytes) -> str | None:
     try:
         doc = Document(content)
         return doc.short_title()
-    except Exception:
+    except Exception as e:  # pragma: no cover - depends on external lib
+        logger.debug("extract_title failed: %s", e)
         return None
 
 def extract_text(url: str, content: bytes) -> str:
@@ -78,8 +87,8 @@ def extract_text(url: str, content: bytes) -> str:
         try:
             transcript = YouTubeTranscriptApi.get_transcript(vid)
             return " ".join([t.get("text", "") for t in transcript])
-        except Exception:
-            pass
+        except Exception as e:  # pragma: no cover - depends on external API
+            logger.debug("YouTube transcript fetch failed for %s: %s", url, e)
     # PDF extraction
     if url.lower().endswith(".pdf") or content[:4] == b"%PDF":
         try:
@@ -90,7 +99,8 @@ def extract_text(url: str, content: bytes) -> str:
                 if t:
                     parts.append(t)
             return "\n".join(parts)
-        except Exception:
+        except Exception as e:  # pragma: no cover - depends on PDF content
+            logger.warning("PDF extraction failed for %s: %s", url, e)
             return ""
     # Fallback HTML extraction
     try:
@@ -98,13 +108,14 @@ def extract_text(url: str, content: bytes) -> str:
         txt = trafilatura.extract(downloaded, include_formatting=False, include_images=False) or ""
         if txt.strip():
             return txt
-    except Exception:
-        pass
+    except Exception as e:  # pragma: no cover - depends on external lib
+        logger.debug("trafilatura extraction failed for %s: %s", url, e)
     try:
         doc = Document(content)
         html = doc.summary()
         return trafilatura.utils.clean_text(html) or ""
-    except Exception:
+    except Exception as e:  # pragma: no cover - depends on external lib
+        logger.debug("readability extraction failed for %s: %s", url, e)
         return ""
 
 
