@@ -1,26 +1,33 @@
 # Neural
 
-Simple Transformer-based neural network example.
+Local LLM server with memory and identity anchors. Plus a tiny Transformer demo trainer.
 
-## Setup
+## Mode 1 — Local LLM server
+1. Python 3.11
+2. Create venv and activate
+3. pip install -r requirements.txt
+4. Put a GGUF model into ./models for example llama-3.1-8b-instruct.Q4_K_M.gguf
+5. Edit config.yaml to match the filename
+6. Start: python -m uvicorn src.app:app --host 0.0.0.0 --port 8000
+7. Test:
+   curl -s http://localhost:8000/health
+   curl -s http://localhost:8000/chat -H "Content-Type: application/json" -d '{"message":"Say hi in one sentence"}'
 
-1. Create a virtual environment:
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
+Customize identity in src/identity/anchors.yaml
 
-2. Install dependencies:
-   ```bash
-   pip install torch torchvision torchaudio transformers datasets sentencepiece
-   ```
+## Mode 2 — Tiny trainer
+Your original model.py stays. Run: python model.py
 
-## Usage
-
-Run the model and a small training loop:
-
-```bash
-python model.py
-```
-
-The script downloads the WikiText dataset, trains the transformer briefly, and generates text.
+## Repo layout
+scripts/
+src/
+  app.py
+  llm/engine.py
+  memory/store.py
+  identity/anchors.yaml
+tests/
+models/   do not commit weights
+data/     auto created for memory
+config.yaml
+requirements.txt
+model.py
