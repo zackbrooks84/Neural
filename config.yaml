@@ -1,0 +1,16 @@
+model:
+  model_dir: "models"
+  model_path: "llama-3.1-8b-instruct.Q4_K_M.gguf"
+  n_ctx: 4096
+  n_threads: 6
+  n_gpu_layers: 0
+  temperature: 0.7
+  top_p: 0.95
+
+memory:
+  data_dir: "data"
+  max_context_snippets: 6
+  embed_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+identity:
+  anchors_file: "src/identity/anchors.yaml"
