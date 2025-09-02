@@ -46,8 +46,9 @@ The fetch endpoint automatically extracts text from PDFs and can pull transcript
 
 Static files in `docs/` provide a lightweight chat client that can be hosted
 with GitHub Pages. Enable Pages for the repository and point it at the `docs`
-folder. The page includes a field to configure the API base URL (for example
-`http://localhost:8000`).
+folder. The page automatically populates the API base URL, defaulting to the
+current page's origin or to `http://localhost:8000` when served from GitHub
+Pages. A field remains available to override this value if needed.
 
 ### Security
 By default the server binds only to localhost. URL fetching is limited to
