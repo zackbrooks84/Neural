@@ -15,3 +15,5 @@ memory:
 
 identity:
   anchors_file: "src/identity/anchors.yaml"
+  anchors_per_query: 2
+  anchor_injection: "every_query"
