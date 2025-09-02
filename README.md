@@ -42,6 +42,13 @@ curl -s "http://127.0.0.1:8000/fetch?url=https://arxiv.org/abs/2407.12345"
 
 The fetch endpoint automatically extracts text from PDFs and can pull transcripts from YouTube videos.
 
+### GitHub Pages web UI
+
+Static files in `docs/` provide a lightweight chat client that can be hosted
+with GitHub Pages. Enable Pages for the repository and point it at the `docs`
+folder. The page includes a field to configure the API base URL (for example
+`http://localhost:8000`).
+
 ### Security
 By default the server binds only to localhost. URL fetching is limited to
 domains and file types listed in the `web` section of `config.yaml` to reduce

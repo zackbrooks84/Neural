@@ -2,6 +2,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import yaml
 import logging
@@ -15,6 +16,13 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Ember Local Server")
 app.mount("/assets", StaticFiles(directory="index"), name="assets")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 with open("config.yaml", "r", encoding="utf-8") as f:
     CFG = yaml.safe_load(f)
