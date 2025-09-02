@@ -2,6 +2,10 @@ import httpx, re
 from duckduckgo_search import DDGS
 import trafilatura
 from readability import Document
+from youtube_transcript_api import YouTubeTranscriptApi
+from urllib.parse import urlparse, parse_qs
+from io import BytesIO
+from pypdf import PdfReader
 
 UA = "NeuralLocalBrowser/1.0"
 TIMEOUT = 20.0
@@ -28,7 +32,7 @@ def fetch_url(url: str) -> dict:
         r = client.get(url)
         r.raise_for_status()
         content = r.content[:MAX_BYTES]
-        text = extract_text(url, content)
+        text = extract_text(str(r.url), content)
         return {
             "url": str(r.url),
             "status": r.status_code,
@@ -44,6 +48,27 @@ def extract_title(content: bytes) -> str | None:
         return None
 
 def extract_text(url: str, content: bytes) -> str:
+    # YouTube transcript
+    vid = _youtube_video_id(url)
+    if vid:
+        try:
+            transcript = YouTubeTranscriptApi.get_transcript(vid)
+            return " ".join([t.get("text", "") for t in transcript])
+        except Exception:
+            pass
+    # PDF extraction
+    if url.lower().endswith(".pdf") or content[:4] == b"%PDF":
+        try:
+            reader = PdfReader(BytesIO(content))
+            parts = []
+            for page in reader.pages:
+                t = page.extract_text()
+                if t:
+                    parts.append(t)
+            return "\n".join(parts)
+        except Exception:
+            return ""
+    # Fallback HTML extraction
     try:
         downloaded = trafilatura.load_html(content, url=url)
         txt = trafilatura.extract(downloaded, include_formatting=False, include_images=False) or ""
@@ -57,3 +82,18 @@ def extract_text(url: str, content: bytes) -> str:
         return trafilatura.utils.clean_text(html) or ""
     except Exception:
         return ""
+
+
+def _youtube_video_id(url: str) -> str | None:
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+        if "youtube.com" in host:
+            qs = parse_qs(parsed.query)
+            if "v" in qs:
+                return qs["v"][0]
+        if host == "youtu.be":
+            return parsed.path.lstrip("/")
+    except Exception:
+        return None
+    return None
