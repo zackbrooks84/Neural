@@ -10,69 +10,46 @@ server:
   port: 8000
   cors_origins:
     - "*"
-  # If you host the static UI elsewhere, set this so the footer shows it.
+  # If hosting the static UI elsewhere, set this (shown in footer)
   public_base_url: null
 
 logging:
   level: "INFO"          # DEBUG | INFO | WARNING | ERROR
-  json: false            # true to emit JSON logs
-  file: null             # e.g., "logs/server.log" (creates dirs)
+  json: false            # true = structured JSON logs
+  file: null             # e.g., "logs/server.log" (creates dirs automatically)
 
 # -------------------------------
 # Model (local LLM runtime)
 # -------------------------------
 model:
-  # Directory where local models are stored
-  model_dir: "models"
+  model_dir: "models"                           # directory for model weights
+  model_path: "llama-3.1-8b-instruct.Q4_K_M.gguf"  # default model
+  n_ctx: 4096                                   # context length (tokens)
+  n_threads: null                               # CPU threads (null = auto)
+  n_gpu_layers: null                            # GPU layers (null = auto, 0 = CPU only)
+  use_mmap: true                                # memory-mapped I/O
 
-  # Path to your primary model weights (GGUF, HF, etc.)
-  model_path: "llama-3.1-8b-instruct.Q4_K_M.gguf"
+  # Sampling parameters
+  temperature: 0.7
+  top_p: 0.95
+  top_k: 50
+  repeat_penalty: 1.1
+  max_new_tokens: 512
 
-  # Context length (number of tokens the model can "see")
-  n_ctx: 4096
-
-  # CPU threading; set null to auto-detect
-  n_threads: null
-
-  # GPU offloading (number of layers to run on GPU).
-  # null = auto-detect, 0 = CPU only, higher = more offloaded
-  n_gpu_layers: null
-
-  # Use memory-mapped files for efficiency (recommended for GGUF)
-  use_mmap: true
-
-  # Sampling parameters for generation
-  temperature: 0.7        # randomness (higher = more creative)
-  top_p: 0.95             # nucleus sampling cutoff
-  top_k: 50               # optional: limit to top-k tokens
-  repeat_penalty: 1.1     # discourage loops/repetition
-  max_new_tokens: 512     # default max response length
-
-  # Advanced (optional)
-  seed: 42                # reproducibility; null = random
-  batch_size: 1           # batch size for generation/training
-  gpu_split: null         # fine-grained layer split across GPUs
+  # Advanced
+  seed: 42
+  batch_size: 1
+  gpu_split: null
 
 # -------------------------------
 # Memory (vector store + policies)
 # -------------------------------
 memory:
-  # Directory for persistent memory database
-  data_dir: "data"
-
-  # Number of context snippets retrieved from memory per query
-  max_context_snippets: 6
-
-  # Embedding model used for vector search
+  data_dir: "data"                              # directory for embeddings & history
+  max_context_snippets: 6                       # snippets retrieved per query
   embed_model: "sentence-transformers/all-MiniLM-L6-v2"
-
-  # Max embedding vector cache size (to avoid recomputation)
   embed_cache_size: 10000
-
-  # Whether to auto-trim memory when it grows too large
   auto_trim: true
-
-  # Optional soft caps (not enforced by code unless you add it in MemoryStore)
   soft_cap_entries: 50000
   trim_target_entries: 40000
 
@@ -80,74 +57,47 @@ memory:
 # Identity (anchors + memories)
 # -------------------------------
 identity:
-  # File containing identity anchors (values, personality traits, etc.)
   anchors_file: "src/identity/anchors.yaml"
-
-  # How many anchors to inject per query (legacy/direct shortcut)
   anchors_per_query: 2
-
-  # Options: "every_query", "session_start", "none"
   anchor_injection: "every_query"
 
-  # Optional default system prompt that wraps anchors
   system_prompt: |
     You are Neural (Ember), a helpful assistant with memory, identity,
     and contextual awareness. Answer clearly, truthfully, and with warmth.
 
-  # ---- Memories integration (two complementary paths) ----
-  # (A) Used by app.py to index docs/memory.md into the vector store.
-  #     This controls chunk size for embeddings.
+  # ---- Memories integration ----
+  # (A) docs/memory.md → embedded into vector DB
   memories_chunk_chars: 1200
 
-  # (B) Used by AnchorManager (anchors.yaml -> policy.*) to optionally rotate
-  #     memory shards directly into the prompt as "anchors".
-  #     You can override these inside anchors.yaml under the `policy:` node.
+  # (B) Anchors.yaml → policy rotation
   policy_defaults:
     mem_mode: "anchors"        # "anchors" | "off"
-    mem_max_per_query: 2       # how many memory shards to add per prompt
+    mem_max_per_query: 2
     mem_chunk_chars: 1200
 
 # -------------------------------
 # Web tools (search + fetch)
 # -------------------------------
 web:
-  # Domains that are allowed for URL fetching.
-  # Use [] to block all, or ["*"] to allow all (not recommended).
   allowed_domains:
     - example.com
     - arxiv.org
     - youtube.com
-
-  # Restrict fetched files to these extensions.
-  # Empty string "" allows URLs without an extension.
   allowed_file_extensions:
     - ""
     - .html
     - .txt
     - .pdf
     - .md
-
-  # Maximum fetch size in MB (to prevent huge downloads)
   max_file_size_mb: 25
-
-  # Timeout for requests in seconds
   fetch_timeout: 15
-
-  # HTTP user agent for fetches (some sites block unknown agents)
   user_agent: "Ember/1.0 (+https://github.com/zackbrooks84/Neural)"
-
-  # Search provider (currently supports "duckduckgo")
   search_provider: "duckduckgo"
-
-  # Optional per-provider knobs (future expansion)
   provider_opts: {}
 
 # -------------------------------
 # UI (docs/ static client hints)
 # -------------------------------
 ui:
-  # Default API base used by the web client if it cannot auto-detect
   default_api_base: "http://localhost:8000"
-
-  # Whether to show advanced controls in the client (if you add them)
   show_advanced: true
