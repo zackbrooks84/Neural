@@ -1,5 +1,6 @@
 /* ============================================================
- * Ember / Neural – index/main.js (API first, WebLLM fallback)
+ * Ember / Neural – index/main.js
+ * Modes: Auto (API → Browser), API only, Browser (WebLLM) only
  * ============================================================ */
 
 (() => {
@@ -8,13 +9,14 @@
   // -------------------------------
   const LS_HISTORY = 'chat-history';
   const LS_API = 'api-base';
+  const LS_MODE = 'chat-mode';              // 'auto' | 'api' | 'webllm'
   const MAX_HISTORY = 200;
   const REQ_TIMEOUT_MS = 30_000;
   const RETRIES = 2;
   const RETRY_BACKOFF_MS = 800;
 
-  // WebLLM model (browser fallback)
-  // See: https://github.com/mlc-ai/web-llm
+  // WebLLM (browser) model id – served via:
+  // <script src="https://unpkg.com/@mlc-ai/web-llm@0.2.70/dist/index.min.js"></script>
   const WEBLLM_MODEL = 'Llama-3.1-8B-Instruct-q4f16_1-MLC';
 
   // -------------------------------
@@ -28,7 +30,9 @@
   const SAVE_API_BTN = $('save-api');
   const USE_WEB = $('use-web');
   const WEB_QUERY = $('web-query');
+  const MODE_SELECT = $('mode-select'); // optional (Auto/API/Browser dropdown)
 
+  // Optional status chip in the hero
   const API_DOT = $('api-dot');
   const API_STATUS = $('api-status');
 
@@ -36,12 +40,10 @@
   // State
   // -------------------------------
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
   let history = [];
   try { history = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]'); }
   catch { history = []; }
-
-  let mode = 'api'; // 'api' | 'webllm'
-  let webllmEngine = null; // set when initialized
 
   let apiBase = localStorage.getItem(LS_API);
   if (!apiBase) {
@@ -51,6 +53,11 @@
     localStorage.setItem(LS_API, apiBase);
   }
   if (API_INPUT) API_INPUT.value = apiBase;
+
+  let modePref = localStorage.getItem(LS_MODE) || 'auto';   // 'auto' | 'api' | 'webllm'
+  if (MODE_SELECT) MODE_SELECT.value = modePref;
+
+  let webllmEngine = null; // set when initialized
 
   // -------------------------------
   // Helpers
@@ -66,13 +73,18 @@
     } catch { return null; }
   }
 
-  function setApiStatus(ok) {
+  function setStatusChip(kind) {
+    // kind: 'ok' | 'offline' | 'unresponsive' | 'browser'
     if (!API_DOT || !API_STATUS) return;
-    if (ok === true) {
+    if (kind === 'browser') {
       API_DOT.style.background = '#22c55e';
       API_DOT.style.boxShadow = '0 0 10px rgba(34,197,94,.6)';
-      API_STATUS.textContent = mode === 'webllm' ? 'Browser LLM' : 'Available';
-    } else if (ok === false) {
+      API_STATUS.textContent = 'Browser LLM';
+    } else if (kind === 'ok') {
+      API_DOT.style.background = '#22c55e';
+      API_DOT.style.boxShadow = '0 0 10px rgba(34,197,94,.6)';
+      API_STATUS.textContent = 'Available';
+    } else if (kind === 'offline') {
       API_DOT.style.background = '#ef4444';
       API_DOT.style.boxShadow = '0 0 10px rgba(239,68,68,.6)';
       API_STATUS.textContent = 'Offline';
@@ -84,18 +96,14 @@
   }
 
   async function probeHealth(base) {
+    // Skip probing if user forces browser-only mode
+    if (modePref === 'webllm') { setStatusChip('browser'); return false; }
     try {
       const r = await fetch(`${base}/health`, { method: 'GET' });
-      if (r.ok) {
-        mode = 'api';
-        setApiStatus(true);
-        return true;
-      }
-      setApiStatus(null);
-      return false;
+      if (r.ok) { setStatusChip('ok'); return true; }
+      setStatusChip('unresponsive'); return false;
     } catch {
-      setApiStatus(false);
-      return false;
+      setStatusChip('offline'); return false;
     }
   }
 
@@ -134,36 +142,33 @@
   renderHistory();
 
   // -------------------------------
-  // WebLLM (browser fallback)
+  // WebLLM (browser) path
   // -------------------------------
   async function ensureWebLLM() {
     if (webllmEngine) return webllmEngine;
-    if (!window.webllm) throw new Error('WebLLM not loaded');
-    appendMessage('assistant pending', 'Loading browser model… (~first time only)');
-    // WebLLM engine
+    if (!window.webllm) throw new Error('WebLLM script not loaded.');
+    appendMessage('assistant pending', 'Loading browser model… (first time only)');
     webllmEngine = await webllm.CreateMLCEngine(WEBLLM_MODEL, {
-      // You can tweak generation defaults here
       initProgressCallback: (p) => {
         const el = document.querySelector('.assistant.pending:last-child');
-        if (el && p && p.progress) el.innerHTML = `Loading browser model… ${Math.round(p.progress * 100)}%`;
+        if (el && p && typeof p.progress === 'number') {
+          el.innerHTML = `Loading browser model… ${Math.round(p.progress * 100)}%`;
+        }
       }
     });
-    // Replace last pending bubble with a small note
     const pending = document.querySelector('.assistant.pending:last-child');
     if (pending) pending.outerHTML = `<div class="assistant">Browser model ready.</div>`;
-    mode = 'webllm';
-    setApiStatus(true);
+    setStatusChip('browser');
     return webllmEngine;
   }
 
   async function webllmChat(message) {
     const engine = await ensureWebLLM();
-    // Build minimal chat history for instruct models
     const msgs = [
       { role: 'system', content: 'You are Ember, concise, kind, and truthful.' },
       ...history.flatMap(h => ([
         { role: 'user', content: h.user },
-        { role: 'assistant', content: h.assistant }
+        { role: 'assistant', content: h.assistant },
       ])),
       { role: 'user', content: message }
     ];
@@ -171,13 +176,13 @@
       messages: msgs,
       temperature: 0.7,
       top_p: 0.95,
-      stream: false
+      stream: false,
     });
     return out?.choices?.[0]?.message?.content ?? '(no output)';
   }
 
   // -------------------------------
-  // API chat
+  // API path
   // -------------------------------
   async function fetchWithTimeout(url, options = {}, timeout = REQ_TIMEOUT_MS) {
     const controller = new AbortController();
@@ -225,26 +230,38 @@
     appendMessage('assistant pending', '…', placeholderId);
 
     try {
-      // Prefer API; if it’s down and we’re on mobile/Pages, fall back to WebLLM
       let reply;
-      if (mode === 'api') {
-        // Build payload respecting your existing controls
+
+      if (modePref === 'webllm') {
+        // Browser-only
+        reply = await webllmChat(msg);
+
+      } else if (modePref === 'api') {
+        // API-only (do not fall back)
         const payload = { message: msg };
         if (USE_WEB?.checked) {
           payload.use_web = true;
           const wq = (WEB_QUERY?.value || '').trim();
           if (wq) payload.web_query = wq;
         }
-        // If API probe fails, switch to webllm
-        const ok = await probeHealth(apiBase);
-        if (!ok) {
-          reply = await webllmChat(msg);
-        } else {
+        const data = await postChat(payload);
+        reply = data?.reply ?? '(No reply)';
+
+      } else {
+        // Auto: try API; if not healthy, fall back to browser
+        const apiOk = await probeHealth(apiBase);
+        if (apiOk) {
+          const payload = { message: msg };
+          if (USE_WEB?.checked) {
+            payload.use_web = true;
+            const wq = (WEB_QUERY?.value || '').trim();
+            if (wq) payload.web_query = wq;
+          }
           const data = await postChat(payload);
           reply = data?.reply ?? '(No reply)';
+        } else {
+          reply = await webllmChat(msg);
         }
-      } else {
-        reply = await webllmChat(msg);
       }
 
       const el = document.getElementById(placeholderId);
@@ -278,14 +295,28 @@
       if (!normalized) { alert('Invalid API base. Example: http://localhost:8000'); return; }
       apiBase = normalized;
       localStorage.setItem(LS_API, apiBase);
-      const ok = await probeHealth(apiBase);
-      if (!ok) {
-        // Suggest switching to browser LLM when API not reachable
-        appendMessage('assistant', 'API not reachable. Falling back to browser model when you send your next message.');
+      await probeHealth(apiBase);
+    });
+  }
+  if (MODE_SELECT) {
+    MODE_SELECT.addEventListener('change', async () => {
+      modePref = MODE_SELECT.value;
+      localStorage.setItem(LS_MODE, modePref);
+      if (modePref === 'webllm') {
+        setStatusChip('browser');
+        try { await ensureWebLLM(); } catch (e) { console.error(e); }
+      } else {
+        await probeHealth(apiBase);
       }
     });
   }
 
-  // Initial probe; if API is down, mark status (we’ll switch on first send)
-  probeHealth(apiBase);
+  // Initial status probe
+  (async () => {
+    if (modePref === 'webllm') {
+      setStatusChip('browser');
+    } else {
+      await probeHealth(apiBase);
+    }
+  })();
 })();
