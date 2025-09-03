@@ -1,83 +1,68 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Ember Chat</title>
-  <link rel="stylesheet" href="./style.css" />
-</head>
-<body>
-  <header>
-    <nav>
-      <ul>
-        <li><a href="#intro">Home</a></li>
-        <li><a href="#visualizer">Visualizer</a></li>
-        <li><a href="#chat">Chat</a></li>
-        <li><a href="#about">About</a></li>
-      </ul>
-    </nav>
-  </header>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Neural</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-900 text-white flex flex-col items-center justify-center min-h-screen px-4">
+    <div class="text-4xl font-bold mb-4">🧠 Neural Chat</div>
 
-  <main>
-    <section id="intro">
-      <h1>Ember Chat</h1>
-      <p>
-        Welcome to Ember Chat, a lightweight web client for talking to your AI models.
-        The interface below allows you to connect to a backend server, send messages,
-        and even augment responses with web search results. Scroll down to explore
-        a real-time 3D visualization rendered with <strong>three.js</strong> and
-        learn more about the project.
-      </p>
-    </section>
+    <div id="chat" class="bg-gray-800 p-4 rounded-lg w-full max-w-xl h-96 overflow-y-auto mb-4 shadow-xl"></div>
 
-    <section id="visualizer">
-      <h2>3D Visualizer</h2>
-      <div id="scene-container"></div>
-      <div id="scene-controls">
-        <label for="cube-color">Cube Color</label>
-        <input type="color" id="cube-color" value="#ff0000" />
-        <label for="rotation-speed">Rotation Speed</label>
-        <input type="range" id="rotation-speed" min="0" max="0.1" step="0.001" value="0.01" />
-        <button id="toggle-rotation">Pause Rotation</button>
-        <button id="toggle-wireframe">Toggle Wireframe</button>
-        <button id="reset-view">Reset View</button>
-      </div>
-    </section>
+    <div class="flex gap-2 w-full max-w-xl">
+      <input
+        id="message"
+        class="flex-1 p-2 rounded bg-gray-700 text-white"
+        placeholder="Type a message..."
+        onkeydown="if(event.key==='Enter') sendMessage()"
+      />
+      <button
+        onclick="sendMessage()"
+        class="bg-purple-600 px-4 py-2 rounded hover:bg-purple-700"
+      >
+        Send
+      </button>
+    </div>
 
-    <section id="chat">
-      <div id="chat-container">
-        <h2>Chat</h2>
-        <div id="server">
-          <input id="api-base" type="text" placeholder="API base URL (e.g., http://localhost:8000)" />
-          <button id="save-api">Save</button>
-        </div>
-        <div id="chat-box"></div>
-        <div id="options">
-          <label><input type="checkbox" id="use-web" /> Enable web search</label>
-          <input id="web-query" type="text" placeholder="Custom web query (optional)" />
-        </div>
-        <div id="input-bar">
-          <input id="message" type="text" placeholder="Type a message" />
-          <button id="send">Send</button>
-        </div>
-      </div>
-    </section>
+    <script>
+      async function sendMessage() {
+        const msg = document.getElementById("message").value.trim();
+        if (!msg) return;
+        appendMessage("You", msg);
+        document.getElementById("message").value = "";
 
-    <section id="about">
-      <h2>About</h2>
-      <p>
-        Ember Chat is an experiment in building approachable interfaces for complex AI models.
-        This demo showcases a simple conversational UI alongside a basic 3D scene to illustrate
-        how traditional web apps can blend with WebGL-powered visuals. Feel free to inspect
-        the code, modify it, and build your own experiments on top of it.
-      </p>
-    </section>
-  </main>
+        appendMessage("Neural", "...", true); // loading
 
-  <footer>
-    <p>&copy; 2024 Ember Chat. All rights reserved.</p>
-  </footer>
+        try {
+          const res = await fetch("http://localhost:8000/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: msg }),
+          });
+          const data = await res.json();
+          replaceLastMessage("Neural", data.response);
+        } catch (err) {
+          replaceLastMessage("Neural", "[Error connecting to server]");
+        }
+      }
 
-  <script src="https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.min.js"></script>
-  <script src="./main.js"></script>
-</body>
+      function appendMessage(sender, text, loading = false) {
+        const chat = document.getElementById("chat");
+        const div = document.createElement("div");
+        div.className = "mb-2";
+        div.innerHTML = `<strong class="text-blue-400">${sender}:</strong> <span class="text-gray-200">${text}</span>`;
+        chat.appendChild(div);
+        if (!loading) chat.scrollTop = chat.scrollHeight;
+      }
+
+      function replaceLastMessage(sender, text) {
+        const chat = document.getElementById("chat");
+        if (chat.lastChild) {
+          chat.lastChild.innerHTML = `<strong class="text-blue-400">${sender}:</strong> <span class="text-gray-200">${text}</span>`;
+          chat.scrollTop = chat.scrollHeight;
+        }
+      }
+    </script>
+  </body>
 </html>
