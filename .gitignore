@@ -1,23 +1,88 @@
-# Ignore Python cache and compiled files
+# ============================
+# Python
+# ============================
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.pyc.*
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
 
-# Ignore model weights and local memory
-*.gguf
-/memory/
-
-# Virtual environment
+# ============================
+# Virtual environments
+# ============================
 venv/
 .venv/
+env/
+.env/
+ENV/
 
-# Ignore generated model and data artifacts
-models/
-data/*.index
-/data/faiss.index
-/data/memory.jsonl
+# ============================
+# OS / Editor
+# ============================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Environment variables
+# ============================
+# Models & memory
+# ============================
+# Model weights
+*.gguf
+*.bin
+*.pt
+*.safetensors
+
+# Local memory DB + embeddings
+/data/
+!data/.gitkeep   # keep the placeholder file if you want empty dir tracked
+
+# ============================
+# Config / Secrets
+# ============================
 .env
-
-# Local configuration overrides
 config/local.yaml
+config/*.local.yaml
+config/*.secret.yaml
+
+# ============================
+# Logs & runtime
+# ============================
+logs/
+*.log
+*.out
+*.err
+
+# SQLite / cache artifacts
+*.db
+*.sqlite3
+*.sqlite
+*.index
+*.lock
+*.tmp
+*.bak
+*.cache
+.cache/
+__cache__/
+
+# ============================
+# Node / Frontend (if you add extras in docs/)
+# ============================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Built assets (if you later build a frontend)
+docs/.vite/
+docs/.next/
+docs/out/
+docs/build/
