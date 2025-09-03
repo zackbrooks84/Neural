@@ -1,9 +1,9 @@
+# src/app.py
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
 import re
-import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from .llm.engine import LLMEngine
 from .memory.store import MemoryStore
 from .tools.web import web_search, fetch_url
-from .identity.manager import AnchorManager  # supports advanced policy & fields
+from .identity.manager import AnchorManager  # advanced policy & fields
 
 # -----------------------------------------------------------------------------
 # Paths & config
@@ -27,14 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]  # repo root
 CONFIG_PATH = ROOT / "config.yaml"
 DOCS_DIR = ROOT / "docs"
 INDEX_FILE = DOCS_DIR / "index.html"
-
-# Preferred memories filename (lowercase), plus permissive fallbacks
-MEMORY_FILENAMES = [
-    "memory.md",      # preferred
-    "Memory.md",
-    "Memories.md",
-    "memories.md",
-]
+MEMORIES_MD = DOCS_DIR / "memory.md"  # <- auto-index source
+FINGERPRINT_FILE = ROOT / "data" / ".memories_md.sha256"  # idempotent reindex
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -54,7 +48,7 @@ with CONFIG_PATH.open("r", encoding="utf-8") as f:
 # -----------------------------------------------------------------------------
 # App & CORS
 # -----------------------------------------------------------------------------
-app = FastAPI(title="Ember Local Server", version="1.0")
+app = FastAPI(title="Ember Local Server", version="1.1")
 
 # Serve static UI from /docs (GitHub Pages compatible)
 if DOCS_DIR.exists():
@@ -97,93 +91,148 @@ ANCH = AnchorManager(
 )
 
 # -----------------------------------------------------------------------------
-# Memories.md ingestion -> MemoryStore
+# Memory.md → Vector store (auto index at startup)
 # -----------------------------------------------------------------------------
-def _resolve_memories_path() -> Optional[Path]:
-    """Find docs/memory.md (preferred) or common fallbacks in docs/."""
-    for name in MEMORY_FILENAMES:
-        p = (DOCS_DIR / name).resolve()
-        if p.exists() and p.is_file():
-            return p
-    return None
+def _sha256_bytes(data: bytes) -> str:
+    h = hashlib.sha256()
+    h.update(data)
+    return h.hexdigest()
 
-def _chunk_markdown_text(md: str, max_chars: int = 1200) -> list[str]:
-    """
-    Chunk Markdown by headings/blank lines, strip code fences and inline links,
-    and shard very long sections to ~max_chars.
-    """
-    md = md.replace("\r\n", "\n").replace("\r", "\n")
-    # remove fenced code blocks
-    md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)
-    # split by top-level headings or blank lines
-    parts = re.split(r"\n(?=# )|\n{2,}", md)
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        logger.warning("Failed to read %s: %s", path, e)
+        return ""
 
-    chunks: list[str] = []
-    for p in parts:
-        t = p.strip()
-        if not t:
-            continue
-        # keep link text + URL (label — url)
-        t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 — \2", t)
-        # collapse horizontal whitespace
-        t = re.sub(r"[ \t]+", " ", t)
-        # hard cap into shards
-        while len(t) > max_chars:
-            cut = t.rfind(". ", 0, max_chars)
-            if cut == -1:
-                cut = max_chars
-            chunks.append(t[:cut].strip())
-            t = t[cut:].strip()
-        if t:
-            chunks.append(t)
-    return chunks
+def _normalize_whitespace(s: str) -> str:
+    return re.sub(r"\s+", " ", s).strip()
 
-def _maybe_index_memories_to_store(mem_path: Path, max_chars: int = 1200) -> dict:
+def _chunk_text(text: str, chunk_chars: int) -> List[str]:
     """
-    Idempotent indexing of docs/memory.md into MemoryStore.
-    We keep a small stamp file in data/ to avoid re-embedding if unchanged.
+    Chunk by characters but prefer to cut on paragraph boundaries,
+    then sentence boundaries, then word boundaries.
     """
+    text = text.strip()
+    if not text:
+        return []
+
+    paras = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
+    chunks: List[str] = []
+    buf = ""
+
+    def flush():
+        nonlocal buf
+        if buf.strip():
+            chunks.append(buf.strip())
+        buf = ""
+
+    for p in paras:
+        if not buf:
+            buf = p
+        elif len(buf) + 2 + len(p) <= chunk_chars:
+            buf = f"{buf}\n\n{p}"
+        else:
+            # try to split the paragraph if it's huge
+            if len(p) > chunk_chars:
+                # sentence-ish split
+                parts = re.split(r"(?<=[.!?])\s+", p)
+                tmp = ""
+                for s in parts:
+                    if not tmp:
+                        tmp = s
+                    elif len(tmp) + 1 + len(s) <= chunk_chars:
+                        tmp = f"{tmp} {s}"
+                    else:
+                        # push tmp to either buf or chunks
+                        if not buf:
+                            buf = tmp
+                        elif len(buf) + 2 + len(tmp) <= chunk_chars:
+                            buf = f"{buf}\n\n{tmp}"
+                        else:
+                            flush()
+                            buf = tmp
+                        tmp = s
+                # push remainder
+                if tmp:
+                    if not buf:
+                        buf = tmp
+                    elif len(buf) + 2 + len(tmp) <= chunk_chars:
+                        buf = f"{buf}\n\n{tmp}"
+                    else:
+                        flush()
+                        buf = tmp
+            else:
+                flush()
+                buf = p
+        if len(buf) >= chunk_chars:
+            flush()
+
+    flush()
+    # final pass: ensure no chunk exceeds chunk_chars by hard wrap (rare)
+    out: List[str] = []
+    for c in chunks:
+        if len(c) <= chunk_chars:
+            out.append(c)
+        else:
+            start = 0
+            while start < len(c):
+                out.append(c[start : start + chunk_chars])
+                start += chunk_chars
+    return out
+
+def _fingerprint_path() -> Path:
+    # ensure data dir exists
     data_dir = Path(mem_cfg.get("data_dir", "data"))
     data_dir.mkdir(parents=True, exist_ok=True)
-    stamp_file = data_dir / ".memories_index.json"
+    return data_dir / FINGERPRINT_FILE.name
 
-    src_mtime = int(mem_path.stat().st_mtime)
-    stamp = {}
-    if stamp_file.exists():
+def index_memories_md_if_needed() -> None:
+    """
+    Idempotently embed docs/memory.md into the MemoryStore as 'memory' entries.
+    Re-runs only if the file content (after whitespace normalization) changed.
+    """
+    chunk_chars = int(id_cfg.get("memories_chunk_chars", 1200))
+    if not MEMORIES_MD.exists():
+        logger.info("No docs/memory.md found; skipping memory ingestion.")
+        return
+
+    raw = _read_text(MEMORIES_MD)
+    norm = _normalize_whitespace(raw)
+    if not norm:
+        logger.info("docs/memory.md is empty after normalization; skipping.")
+        return
+
+    fp_current = _sha256_bytes(norm.encode("utf-8"))
+    fp_file = _fingerprint_path()
+    fp_previous = fp_file.read_text(encoding="utf-8").strip() if fp_file.exists() else ""
+
+    if fp_current == fp_previous:
+        logger.info("docs/memory.md unchanged (fingerprint match); skipping re-index.")
+        return
+
+    logger.info("Indexing docs/memory.md into vector memory (chunk=%s chars)...", chunk_chars)
+    chunks = _chunk_text(norm, chunk_chars)
+    added = 0
+    for ch in chunks:
         try:
-            stamp = json.loads(stamp_file.read_text(encoding="utf-8"))
-        except Exception:
-            stamp = {}
+            MEM.add("memory", ch)
+            added += 1
+        except Exception as e:
+            logger.warning("Failed to embed a memory chunk (%d chars): %s", len(ch), e)
 
-    if stamp.get("src") == str(mem_path) and stamp.get("mtime") == src_mtime:
-        return {"indexed": stamp.get("count", 0), "skipped": True}
-
-    md = mem_path.read_text(encoding="utf-8")
-    chunks = _chunk_markdown_text(md, max_chars=max_chars)
-
-    # Store as role='memory' so it can be retrieved like conversation memory
-    for c in chunks:
-        MEM.add("memory", c)
-
-    new_stamp = {
-        "src": str(mem_path),
-        "mtime": src_mtime,
-        "count": len(chunks),
-        "ts": int(time.time()),
-    }
-    stamp_file.write_text(json.dumps(new_stamp, indent=2), encoding="utf-8")
-    return {"indexed": len(chunks), "skipped": False}
-
-# Resolve and index memories at startup
-MEM_FILE = _resolve_memories_path()
-if MEM_FILE:
     try:
-        res = _maybe_index_memories_to_store(MEM_FILE, max_chars=int(CFG.get("identity", {}).get("memories_chunk_chars", 1200)))
-        logger.info("Memories indexing: %s (%s)", MEM_FILE.name, res)
+        fp_file.write_text(fp_current, encoding="utf-8")
     except Exception as e:
-        logger.exception("Failed to index %s: %s", MEM_FILE, e)
-else:
-    logger.info("No docs/memory.md (or fallback) found; skipping memories ingestion.")
+        logger.warning("Failed to persist memory.md fingerprint: %s", e)
+
+    logger.info("Memory ingestion complete: %d chunk(s) added.", added)
+
+# Run the ingestion once at startup
+try:
+    index_memories_md_if_needed()
+except Exception as e:
+    logger.exception("Auto-indexing docs/memory.md failed: %s", e)
 
 # -----------------------------------------------------------------------------
 # Models
@@ -271,14 +320,14 @@ async def chat(inp: ChatIn):
                 logger.exception("fetch_url failed for %s: %s", u, e)
                 web_lines.append(f"- Error fetching {u}: {e}")
 
-    # --- Memory retrieval (includes docs/memory.md chunks, once indexed) ---
+    # --- Memory retrieval ---
     k = int(mem_cfg.get("max_context_snippets", 6))
     snippets = MEM.search(query, k=k) if k > 0 else []
 
     # --- System prompt assembly ---
     sys_lines: List[str] = []
-    # Optional top-level system prompt from anchors file (if your AnchorManager supports it)
-    if getattr(ANCH, "system_prompt", None):
+    # Optional top-level system prompt from anchors file
+    if ANCH.system_prompt:
         sys_lines.append(ANCH.system_prompt.strip())
     else:
         sys_lines.append(f"You are {ANCH.system_name}.")
@@ -286,12 +335,7 @@ async def chat(inp: ChatIn):
 
     # Identity anchors (always-on + rotating according to policy)
     required = set(inp.anchor_tags) if inp.anchor_tags else None
-    try:
-        selected_anchors = ANCH.get_for_prompt(required_tags=required)  # enhanced manager
-    except TypeError:
-        # fallback if your manager doesn't support required_tags param
-        selected_anchors = ANCH.get_for_prompt()
-    for a in selected_anchors:
+    for a in ANCH.get_for_prompt(required_tags=required):
         sys_lines.append(a)
 
     # Web snippets
@@ -299,12 +343,11 @@ async def chat(inp: ChatIn):
         sys_lines.append("\n".join(web_lines))
         sys_lines.append("Use these sources and cite [numbers] or URLs in your answer.")
 
-    # Memory snippets (conversation + docs/memory.md chunks)
+    # Memory snippets
     if snippets:
         sys_lines.append("Relevant memory:")
         for m in snippets:
-            # m is expected to be a dict with role/content; adjust if your store uses a different shape
-            sys_lines.append(f"- {m.get('role','memory')}: {m.get('content','')}")
+            sys_lines.append(f"- {m['role']}: {m['content']}")
 
     system_prompt = "\n".join(sys_lines)
 
@@ -324,11 +367,7 @@ async def chat(inp: ChatIn):
 # ---------------- Anchors API ----------------
 @app.get("/anchors")
 async def get_anchors(include_disabled: bool = False):
-    try:
-        return {"anchors": ANCH.list_anchors(include_disabled=include_disabled)}
-    except TypeError:
-        # fallback if your manager doesn't support include_disabled
-        return {"anchors": ANCH.list_anchors()}
+    return {"anchors": ANCH.list_anchors(include_disabled=include_disabled)}
 
 @app.post("/anchors")
 async def add_anchor(inp: AnchorIn):
@@ -336,61 +375,37 @@ async def add_anchor(inp: AnchorIn):
     if not txt:
         raise HTTPException(status_code=400, detail="Anchor cannot be empty.")
     ANCH.add_anchor(txt)
-    return {"anchors": getattr(ANCH, "list_anchors", lambda: ANCH.anchors)()}
+    return {"anchors": ANCH.list_anchors()}
 
 @app.delete("/anchors")
 async def remove_anchor(text: str = Query(..., min_length=1)):
-    if hasattr(ANCH, "remove_anchor"):
-        removed = ANCH.remove_anchor(text)
-        if not removed:
-            raise HTTPException(status_code=404, detail="Anchor not found.")
-        return {"anchors": getattr(ANCH, "list_anchors", lambda: ANCH.anchors)()}
-    raise HTTPException(status_code=400, detail="Remove not supported by AnchorManager.")
+    removed = ANCH.remove_anchor(text)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Anchor not found.")
+    return {"anchors": ANCH.list_anchors()}
 
 @app.patch("/anchors")
 async def update_anchor(inp: AnchorUpdateIn):
-    if hasattr(ANCH, "update_anchor"):
-        ok = ANCH.update_anchor(
-            old_text=inp.old_text,
-            new_text=inp.new_text,
-            tags=inp.tags,
-            weight=inp.weight,
-            always_on=inp.always_on,
-            priority=inp.priority,
-            disabled=inp.disabled,
-        )
-        if not ok:
-            raise HTTPException(status_code=404, detail="Anchor not found.")
-        try:
-            return {"anchors": ANCH.list_anchors(include_disabled=True)}
-        except TypeError:
-            return {"anchors": getattr(ANCH, "list_anchors", lambda: ANCH.anchors)()}
-    raise HTTPException(status_code=400, detail="Update not supported by AnchorManager.")
+    ok = ANCH.update_anchor(
+        old_text=inp.old_text,
+        new_text=inp.new_text,
+        tags=inp.tags,
+        weight=inp.weight,
+        always_on=inp.always_on,
+        priority=inp.priority,
+        disabled=inp.disabled,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Anchor not found.")
+    return {"anchors": ANCH.list_anchors(include_disabled=True)}
 
 @app.post("/anchors/select")
 async def select_anchors(
     n: Optional[int] = Query(None, ge=0),
-    tag: Optional[List[str]] = Query(None, alias="tags"),
+    tag: Optional[List[str]] = Query(None, alias="tags")
 ):
     tags = tag if tag else None
-    try:
-        return {"selected": ANCH.get_for_prompt(n_override=n, required_tags=tags)}
-    except TypeError:
-        # fallback if your manager doesn't accept parameters
-        return {"selected": ANCH.get_for_prompt()}
-
-# ---------------- Memories maintenance ----------------
-@app.post("/memories/reindex")
-async def reindex_memories():
-    """Re-index docs/memory.md into the vector store if it changed."""
-    if not MEM_FILE or not MEM_FILE.exists():
-        raise HTTPException(status_code=404, detail="No docs/memory.md (or fallback) found.")
-    try:
-        res = _maybe_index_memories_to_store(MEM_FILE, max_chars=int(CFG.get("identity", {}).get("memories_chunk_chars", 1200)))
-        return {"ok": True, **res}
-    except Exception as e:
-        logger.exception("Reindex failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"selected": ANCH.get_for_prompt(n_override=n, required_tags=tags)}
 
 # ---------------- Web tools passthrough ----------------
 @app.get("/search")
