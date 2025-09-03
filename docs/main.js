@@ -15,8 +15,8 @@ function renderHistory() {
   const box = document.getElementById('chat-box');
   box.innerHTML = '';
   history.forEach(item => {
-    box.innerHTML += `<div class="user">${item.user}</div>`;
-    box.innerHTML += `<div class="assistant">${item.assistant}</div>`;
+    appendMessage('user', item.user);
+    appendMessage('assistant', item.assistant);
   });
   box.scrollTop = box.scrollHeight;
 }
@@ -31,29 +31,63 @@ if (apiInput && saveApiBtn) {
   });
 }
 
+function appendMessage(role, text, id) {
+  const box = document.getElementById('chat-box');
+  const div = document.createElement('div');
+  div.className = role;
+  if (id) div.id = id;
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
 async function sendMessage() {
   const input = document.getElementById('message');
   const msg = input.value.trim();
   if (!msg) return;
+
+  // Prepare auxiliary elements for optional web search
   const useWeb = document.getElementById('use-web').checked;
   const webQueryInput = document.getElementById('web-query');
   const webQuery = webQueryInput.value.trim();
+
+  // Build request payload
   const payload = { message: msg };
   if (useWeb) {
     payload.use_web = true;
     if (webQuery) payload.web_query = webQuery;
   }
-  const res = await fetch(`${apiBase}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  history.push({ user: msg, assistant: data.reply });
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
-  renderHistory();
-  input.value = '';
-  webQueryInput.value = '';
+
+  // Display user's message immediately
+  appendMessage('user', msg);
+
+  // Placeholder element for assistant response
+  const placeholderId = `assist-${Date.now()}`;
+  appendMessage('assistant pending', '...', placeholderId);
+
+  try {
+    const res = await fetch(`${apiBase}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      throw new Error(`Request failed with status ${res.status}`);
+    }
+    const data = await res.json();
+    history.push({ user: msg, assistant: data.reply });
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    document.getElementById(placeholderId).textContent = data.reply;
+  } catch (err) {
+    // Replace placeholder with error message and log for diagnostics
+    const errMsg = `Error: ${err.message || err}`;
+    document.getElementById(placeholderId).textContent = errMsg;
+    console.error('Chat request failed', err);
+  } finally {
+    renderHistory();
+    input.value = '';
+    webQueryInput.value = '';
+  }
 }
 
 document.getElementById('send').addEventListener('click', sendMessage);
