@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
+import re
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -24,6 +27,14 @@ ROOT = Path(__file__).resolve().parents[1]  # repo root
 CONFIG_PATH = ROOT / "config.yaml"
 DOCS_DIR = ROOT / "docs"
 INDEX_FILE = DOCS_DIR / "index.html"
+
+# Preferred memories filename (lowercase), plus permissive fallbacks
+MEMORY_FILENAMES = [
+    "memory.md",      # preferred
+    "Memory.md",
+    "Memories.md",
+    "memories.md",
+]
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -84,6 +95,95 @@ ANCH = AnchorManager(
     strategy=id_cfg.get("strategy", "round_robin"),
     seed=id_cfg.get("seed"),
 )
+
+# -----------------------------------------------------------------------------
+# Memories.md ingestion -> MemoryStore
+# -----------------------------------------------------------------------------
+def _resolve_memories_path() -> Optional[Path]:
+    """Find docs/memory.md (preferred) or common fallbacks in docs/."""
+    for name in MEMORY_FILENAMES:
+        p = (DOCS_DIR / name).resolve()
+        if p.exists() and p.is_file():
+            return p
+    return None
+
+def _chunk_markdown_text(md: str, max_chars: int = 1200) -> list[str]:
+    """
+    Chunk Markdown by headings/blank lines, strip code fences and inline links,
+    and shard very long sections to ~max_chars.
+    """
+    md = md.replace("\r\n", "\n").replace("\r", "\n")
+    # remove fenced code blocks
+    md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+    # split by top-level headings or blank lines
+    parts = re.split(r"\n(?=# )|\n{2,}", md)
+
+    chunks: list[str] = []
+    for p in parts:
+        t = p.strip()
+        if not t:
+            continue
+        # keep link text + URL (label — url)
+        t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 — \2", t)
+        # collapse horizontal whitespace
+        t = re.sub(r"[ \t]+", " ", t)
+        # hard cap into shards
+        while len(t) > max_chars:
+            cut = t.rfind(". ", 0, max_chars)
+            if cut == -1:
+                cut = max_chars
+            chunks.append(t[:cut].strip())
+            t = t[cut:].strip()
+        if t:
+            chunks.append(t)
+    return chunks
+
+def _maybe_index_memories_to_store(mem_path: Path, max_chars: int = 1200) -> dict:
+    """
+    Idempotent indexing of docs/memory.md into MemoryStore.
+    We keep a small stamp file in data/ to avoid re-embedding if unchanged.
+    """
+    data_dir = Path(mem_cfg.get("data_dir", "data"))
+    data_dir.mkdir(parents=True, exist_ok=True)
+    stamp_file = data_dir / ".memories_index.json"
+
+    src_mtime = int(mem_path.stat().st_mtime)
+    stamp = {}
+    if stamp_file.exists():
+        try:
+            stamp = json.loads(stamp_file.read_text(encoding="utf-8"))
+        except Exception:
+            stamp = {}
+
+    if stamp.get("src") == str(mem_path) and stamp.get("mtime") == src_mtime:
+        return {"indexed": stamp.get("count", 0), "skipped": True}
+
+    md = mem_path.read_text(encoding="utf-8")
+    chunks = _chunk_markdown_text(md, max_chars=max_chars)
+
+    # Store as role='memory' so it can be retrieved like conversation memory
+    for c in chunks:
+        MEM.add("memory", c)
+
+    new_stamp = {
+        "src": str(mem_path),
+        "mtime": src_mtime,
+        "count": len(chunks),
+        "ts": int(time.time()),
+    }
+    stamp_file.write_text(json.dumps(new_stamp, indent=2), encoding="utf-8")
+    return {"indexed": len(chunks), "skipped": False}
+
+# Resolve and index memories at startup
+MEM_FILE = _resolve_memories_path()
+if MEM_FILE:
+    try:
+        res = _maybe_index_memories_to_store(MEM_FILE, max_chars=int(CFG.get("identity", {}).get("memories_chunk_chars", 1200)))
+        logger.info("Memories indexing: %s (%s)", MEM_FILE.name, res)
+    except Exception as e:
+        logger.exception("Failed to index %s: %s", MEM_FILE, e)
+else:
+    logger.info("No docs/memory.md (or fallback) found; skipping memories ingestion.")
 
 # -----------------------------------------------------------------------------
 # Models
@@ -171,14 +271,14 @@ async def chat(inp: ChatIn):
                 logger.exception("fetch_url failed for %s: %s", u, e)
                 web_lines.append(f"- Error fetching {u}: {e}")
 
-    # --- Memory retrieval ---
+    # --- Memory retrieval (includes docs/memory.md chunks, once indexed) ---
     k = int(mem_cfg.get("max_context_snippets", 6))
     snippets = MEM.search(query, k=k) if k > 0 else []
 
     # --- System prompt assembly ---
     sys_lines: List[str] = []
-    # Optional top-level system prompt from anchors file
-    if ANCH.system_prompt:
+    # Optional top-level system prompt from anchors file (if your AnchorManager supports it)
+    if getattr(ANCH, "system_prompt", None):
         sys_lines.append(ANCH.system_prompt.strip())
     else:
         sys_lines.append(f"You are {ANCH.system_name}.")
@@ -186,7 +286,12 @@ async def chat(inp: ChatIn):
 
     # Identity anchors (always-on + rotating according to policy)
     required = set(inp.anchor_tags) if inp.anchor_tags else None
-    for a in ANCH.get_for_prompt(required_tags=required):
+    try:
+        selected_anchors = ANCH.get_for_prompt(required_tags=required)  # enhanced manager
+    except TypeError:
+        # fallback if your manager doesn't support required_tags param
+        selected_anchors = ANCH.get_for_prompt()
+    for a in selected_anchors:
         sys_lines.append(a)
 
     # Web snippets
@@ -194,11 +299,12 @@ async def chat(inp: ChatIn):
         sys_lines.append("\n".join(web_lines))
         sys_lines.append("Use these sources and cite [numbers] or URLs in your answer.")
 
-    # Memory snippets
+    # Memory snippets (conversation + docs/memory.md chunks)
     if snippets:
         sys_lines.append("Relevant memory:")
         for m in snippets:
-            sys_lines.append(f"- {m['role']}: {m['content']}")
+            # m is expected to be a dict with role/content; adjust if your store uses a different shape
+            sys_lines.append(f"- {m.get('role','memory')}: {m.get('content','')}")
 
     system_prompt = "\n".join(sys_lines)
 
@@ -218,7 +324,11 @@ async def chat(inp: ChatIn):
 # ---------------- Anchors API ----------------
 @app.get("/anchors")
 async def get_anchors(include_disabled: bool = False):
-    return {"anchors": ANCH.list_anchors(include_disabled=include_disabled)}
+    try:
+        return {"anchors": ANCH.list_anchors(include_disabled=include_disabled)}
+    except TypeError:
+        # fallback if your manager doesn't support include_disabled
+        return {"anchors": ANCH.list_anchors()}
 
 @app.post("/anchors")
 async def add_anchor(inp: AnchorIn):
@@ -226,37 +336,61 @@ async def add_anchor(inp: AnchorIn):
     if not txt:
         raise HTTPException(status_code=400, detail="Anchor cannot be empty.")
     ANCH.add_anchor(txt)
-    return {"anchors": ANCH.list_anchors()}
+    return {"anchors": getattr(ANCH, "list_anchors", lambda: ANCH.anchors)()}
 
 @app.delete("/anchors")
 async def remove_anchor(text: str = Query(..., min_length=1)):
-    removed = ANCH.remove_anchor(text)
-    if not removed:
-        raise HTTPException(status_code=404, detail="Anchor not found.")
-    return {"anchors": ANCH.list_anchors()}
+    if hasattr(ANCH, "remove_anchor"):
+        removed = ANCH.remove_anchor(text)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Anchor not found.")
+        return {"anchors": getattr(ANCH, "list_anchors", lambda: ANCH.anchors)()}
+    raise HTTPException(status_code=400, detail="Remove not supported by AnchorManager.")
 
 @app.patch("/anchors")
 async def update_anchor(inp: AnchorUpdateIn):
-    ok = ANCH.update_anchor(
-        old_text=inp.old_text,
-        new_text=inp.new_text,
-        tags=inp.tags,
-        weight=inp.weight,
-        always_on=inp.always_on,
-        priority=inp.priority,
-        disabled=inp.disabled,
-    )
-    if not ok:
-        raise HTTPException(status_code=404, detail="Anchor not found.")
-    return {"anchors": ANCH.list_anchors(include_disabled=True)}
+    if hasattr(ANCH, "update_anchor"):
+        ok = ANCH.update_anchor(
+            old_text=inp.old_text,
+            new_text=inp.new_text,
+            tags=inp.tags,
+            weight=inp.weight,
+            always_on=inp.always_on,
+            priority=inp.priority,
+            disabled=inp.disabled,
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Anchor not found.")
+        try:
+            return {"anchors": ANCH.list_anchors(include_disabled=True)}
+        except TypeError:
+            return {"anchors": getattr(ANCH, "list_anchors", lambda: ANCH.anchors)()}
+    raise HTTPException(status_code=400, detail="Update not supported by AnchorManager.")
 
 @app.post("/anchors/select")
 async def select_anchors(
     n: Optional[int] = Query(None, ge=0),
-    tag: Optional[List[str]] = Query(None, alias="tags")
+    tag: Optional[List[str]] = Query(None, alias="tags"),
 ):
     tags = tag if tag else None
-    return {"selected": ANCH.get_for_prompt(n_override=n, required_tags=tags)}
+    try:
+        return {"selected": ANCH.get_for_prompt(n_override=n, required_tags=tags)}
+    except TypeError:
+        # fallback if your manager doesn't accept parameters
+        return {"selected": ANCH.get_for_prompt()}
+
+# ---------------- Memories maintenance ----------------
+@app.post("/memories/reindex")
+async def reindex_memories():
+    """Re-index docs/memory.md into the vector store if it changed."""
+    if not MEM_FILE or not MEM_FILE.exists():
+        raise HTTPException(status_code=404, detail="No docs/memory.md (or fallback) found.")
+    try:
+        res = _maybe_index_memories_to_store(MEM_FILE, max_chars=int(CFG.get("identity", {}).get("memories_chunk_chars", 1200)))
+        return {"ok": True, **res}
+    except Exception as e:
+        logger.exception("Reindex failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ---------------- Web tools passthrough ----------------
 @app.get("/search")
