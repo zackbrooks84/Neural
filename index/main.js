@@ -293,12 +293,20 @@
       scene.background = new THREE.Color(0x0c0c17);
 
       const { clientWidth: width, clientHeight: height } = sceneContainer;
-      camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+      // Ensure non-zero size (in case CSS failed to set height)
+      if (!height || height < 40) {
+        sceneContainer.style.height = '420px';
+      }
+
+      const w = sceneContainer.clientWidth;
+      const h = sceneContainer.clientHeight;
+
+      camera = new THREE.PerspectiveCamera(45, w / h, 0.1, 1000);
       camera.position.set(2, 2, 5);
 
       renderer = new THREE.WebGLRenderer({ antialias: true });
       renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
-      renderer.setSize(width, height, false);
+      renderer.setSize(w, h, false);
       sceneContainer.appendChild(renderer.domElement);
 
       const geometry = new THREE.BoxGeometry();
