@@ -34,6 +34,12 @@ body {
   line-height: 1.6;
 }
 
+/* Layout helper to match HTML */
+.container {
+  width: min(1200px, 94vw);
+  margin: 0 auto;
+}
+
 /* Header & nav */
 header {
   background: linear-gradient(to right, #1a1a2f, #111122);
@@ -256,6 +262,15 @@ main section {
 }
 #scene-controls button:hover { filter: brightness(1.06); }
 #scene-controls button:active { transform: translateY(1px); }
+
+/* Links & footer (to match page feel) */
+a { color: var(--assistant); }
+a:hover { color: #ddd6fe; }
+footer {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted);
+}
 
 /* Scrollbars (WebKit/Chromium/Edge) */
 #chat-box::-webkit-scrollbar { width: 10px; }
