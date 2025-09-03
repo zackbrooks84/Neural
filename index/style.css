@@ -53,6 +53,11 @@ main section {
   color: #0066cc;
 }
 
+.assistant.pending {
+  color: #888;
+  font-style: italic;
+}
+
 #options {
   display: flex;
   align-items: center;
