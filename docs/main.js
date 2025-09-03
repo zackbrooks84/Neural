@@ -3,11 +3,10 @@ const API_KEY = 'api-base';
 let history = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
 let apiBase = localStorage.getItem(API_KEY);
 if (!apiBase) {
-  const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
   if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
-    apiBase = `${proto}//${window.location.host}`;
+    apiBase = window.location.origin;
   } else {
-    apiBase = `${proto}//localhost:8000`;
+    apiBase = "http://localhost:8000";
   }
   localStorage.setItem(API_KEY, apiBase);
 }
@@ -44,20 +43,13 @@ async function sendMessage() {
     payload.use_web = true;
     if (webQuery) payload.web_query = webQuery;
   }
-  try {
-    const res = await fetch(`${apiBase}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    history.push({ user: msg, assistant: data.reply });
-  } catch (err) {
-    history.push({ user: msg, assistant: `Error: ${err.message}` });
-  }
+  const res = await fetch(`${apiBase}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  history.push({ user: msg, assistant: data.reply });
   localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
   renderHistory();
   input.value = '';
@@ -73,3 +65,129 @@ document.getElementById('message').addEventListener('keypress', (e) => {
 });
 
 renderHistory();
+
+/* ------------------------------------------------------------------
+ * 3D Visualization using Three.js
+ * ------------------------------------------------------------------
+ */
+
+// Grab the container element that will hold our WebGL canvas.
+const sceneContainer = document.getElementById('scene-container');
+
+// Only attempt to set up the scene if the container exists on the page.
+if (sceneContainer) {
+  let scene, camera, renderer, cube;
+  let rotationSpeed = parseFloat(document.getElementById('rotation-speed').value);
+  let isRotating = true;
+
+  // Initialize Three.js scene, camera, renderer, and objects.
+  function initScene() {
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f0f0);
+
+    const width = sceneContainer.clientWidth;
+    const height = sceneContainer.clientHeight;
+
+    camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    camera.position.set(2, 2, 5);
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(width, height);
+    sceneContainer.appendChild(renderer.domElement);
+
+    // Primary cube geometry that users can manipulate.
+    const geometry = new THREE.BoxGeometry();
+    const material = new THREE.MeshStandardMaterial({ color: document.getElementById('cube-color').value });
+    cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+
+    // Add a star field for visual interest.
+    createStarField();
+
+    // Lighting: a mix of ambient and directional light for realism.
+    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambient);
+
+    const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+    directional.position.set(5, 5, 5);
+    scene.add(directional);
+
+    // Kick off the animation loop.
+    animate();
+  }
+
+  // Create a field of randomly placed stars.
+  function createStarField() {
+    const starGeometry = new THREE.BufferGeometry();
+    const starCount = 500;
+    const positions = [];
+
+    for (let i = 0; i < starCount; i++) {
+      const x = THREE.MathUtils.randFloatSpread(200);
+      const y = THREE.MathUtils.randFloatSpread(200);
+      const z = THREE.MathUtils.randFloatSpread(200);
+      positions.push(x, y, z);
+    }
+
+    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    const starMaterial = new THREE.PointsMaterial({ color: 0xffffff });
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    scene.add(stars);
+  }
+
+  // Animation loop: rotate the cube and render the scene.
+  function animate() {
+    requestAnimationFrame(animate);
+
+    if (isRotating) {
+      cube.rotation.x += rotationSpeed;
+      cube.rotation.y += rotationSpeed;
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  // Ensure the canvas and camera stay responsive on window resize.
+  function onWindowResize() {
+    const width = sceneContainer.clientWidth;
+    const height = sceneContainer.clientHeight;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+  }
+
+  // UI Controls for interacting with the visualization.
+  const colorInput = document.getElementById('cube-color');
+  const speedInput = document.getElementById('rotation-speed');
+  const toggleRotationBtn = document.getElementById('toggle-rotation');
+  const toggleWireframeBtn = document.getElementById('toggle-wireframe');
+  const resetViewBtn = document.getElementById('reset-view');
+
+  colorInput.addEventListener('input', () => {
+    cube.material.color.set(colorInput.value);
+  });
+
+  speedInput.addEventListener('input', () => {
+    rotationSpeed = parseFloat(speedInput.value);
+  });
+
+  toggleRotationBtn.addEventListener('click', () => {
+    isRotating = !isRotating;
+    toggleRotationBtn.textContent = isRotating ? 'Pause Rotation' : 'Resume Rotation';
+  });
+
+  toggleWireframeBtn.addEventListener('click', () => {
+    cube.material.wireframe = !cube.material.wireframe;
+  });
+
+  resetViewBtn.addEventListener('click', () => {
+    camera.position.set(2, 2, 5);
+    camera.lookAt(0, 0, 0);
+  });
+
+  window.addEventListener('resize', onWindowResize);
+
+  // Initialize everything when the script loads.
+  initScene();
+}
