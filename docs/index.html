@@ -2,134 +2,494 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
     <title>Neural Chat — Powered by Ember</title>
+
+    <!-- Tailwind -->
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+
+    <!-- Markdown + sanitize + highlight -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap"
+      rel="stylesheet"
+    />
+
     <style>
+      :root {
+        color-scheme: dark;
+      }
       body {
-        font-family: 'Orbitron', sans-serif;
-        background-color: #0f0f1a;
-        color: white;
+        font-family: 'Orbitron', system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica, Arial, 'Apple Color Emoji', 'Segoe UI Emoji';
+        background: radial-gradient(1200px 800px at 10% 10%, #141428 0%, #0b0b16 55%, #070711 100%);
+        color: #e7e8ee;
       }
-      canvas {
-        width: 100%;
-        height: 100%;
+      .glass {
+        backdrop-filter: blur(12px);
+        background: rgba(20, 20, 35, 0.55);
+        border: 1px solid rgba(120, 120, 200, 0.18);
       }
+      .glow {
+        box-shadow: 0 0 30px rgba(168, 85, 247, 0.35), inset 0 0 30px rgba(99, 102, 241, 0.15);
+      }
+      .prose {
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      }
+      .msg {
+        scroll-margin: 96px;
+      }
+      .btn {
+        transition: transform .05s ease-out;
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+      /* Chat markdown tweaks */
+      .chat-md h1, .chat-md h2, .chat-md h3 { margin-top: .75rem; margin-bottom: .25rem; }
+      .chat-md p, .chat-md ul, .chat-md ol { margin: .5rem 0; }
+      .chat-md code { background: #15152a; padding: .15rem .35rem; border-radius: .35rem; }
+      .chat-md pre code { display: block; padding: .75rem; border-radius: .5rem; }
     </style>
   </head>
-  <body class="flex flex-col items-center justify-center min-h-screen p-4 space-y-4">
-    <div class="text-5xl font-extrabold text-purple-400 drop-shadow-md animate-pulse">🧠 Neural Chat</div>
+  <body class="min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="w-full px-4 md:px-6 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="h-10 w-10 rounded-xl bg-gradient-to-br from-purple-500 to-indigo-500 glow"></div>
+        <div>
+          <div class="text-2xl font-extrabold text-purple-400 drop-shadow">Neural Chat</div>
+          <div class="text-xs text-gray-400 tracking-wide">Powered by Ember • Local</div>
+        </div>
+      </div>
 
-    <!-- AVATAR RENDER AREA -->
-    <div class="w-64 h-64" id="avatar-canvas-container"></div>
+      <div class="flex items-center gap-2">
+        <button id="btn-settings"
+          class="btn px-3 py-2 rounded-lg bg-gray-800/60 hover:bg-gray-800 text-gray-100 border border-white/10">
+          Settings
+        </button>
+        <button id="btn-clear"
+          class="btn px-3 py-2 rounded-lg bg-gray-800/60 hover:bg-gray-800 text-gray-100 border border-white/10"
+          title="Clear chat (Shift+C)">
+          Clear
+        </button>
+        <a href="https://github.com/" target="_blank" rel="noreferrer"
+          class="btn px-3 py-2 rounded-lg bg-gray-800/60 hover:bg-gray-800 text-gray-100 border border-white/10">
+          GitHub
+        </a>
+      </div>
+    </header>
 
-    <div id="chat" class="bg-gray-800 rounded-lg p-4 shadow-lg w-full max-w-2xl h-[24rem] overflow-y-auto"></div>
+    <!-- Main -->
+    <main class="flex-1 w-full px-4 md:px-6 pb-6 grid grid-cols-1 lg:grid-cols-[360px,1fr] gap-6">
+      <!-- Left: Avatar + Controls -->
+      <section class="glass rounded-2xl p-4 glow">
+        <h2 class="text-sm text-gray-300 mb-2">Avatar</h2>
+        <div class="w-full aspect-square rounded-xl overflow-hidden border border-white/10" id="avatar-canvas"></div>
 
-    <div class="flex gap-2 w-full max-w-2xl">
-      <input
-        id="message"
-        type="text"
-        placeholder="Type your message..."
-        onkeydown="if(event.key==='Enter') sendMessage()"
-        class="flex-1 p-3 rounded bg-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
-      />
-      <button
-        onclick="sendMessage()"
-        class="bg-purple-600 hover:bg-purple-700 px-5 py-2 rounded text-white shadow-md"
-      >
-        Send
-      </button>
+        <div class="mt-4 grid grid-cols-2 gap-2">
+          <label class="text-xs text-gray-400 col-span-2">Avatar Reactivity</label>
+          <input id="reactivity" type="range" min="0" max="100" value="60" />
+          <label class="text-xs text-gray-400 col-span-2">Hue Shift</label>
+          <input id="hue" type="range" min="0" max="360" value="280" />
+        </div>
+
+        <div class="mt-6 border-t border-white/10 pt-4">
+          <h3 class="text-sm text-gray-300 mb-2">Web & Anchors</h3>
+          <div class="flex items-center gap-2 mb-2">
+            <input id="use-web" type="checkbox" class="h-4 w-4 accent-purple-500" />
+            <label for="use-web" class="text-sm text-gray-300">Enable web search</label>
+          </div>
+          <input id="web-query" type="text" placeholder="Override web query (optional)"
+            class="w-full px-3 py-2 rounded-lg bg-gray-900/70 border border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+
+          <textarea id="urls" rows="3" placeholder="Fetch URLs (one per line, optional)"
+            class="mt-2 w-full px-3 py-2 rounded-lg bg-gray-900/70 border border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+
+          <input id="anchor-tags" type="text" placeholder="Anchor tags (comma separated, optional)"
+            class="mt-2 w-full px-3 py-2 rounded-lg bg-gray-900/70 border border-white/10 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500" />
+        </div>
+      </section>
+
+      <!-- Right: Chat -->
+      <section class="glass rounded-2xl p-4 glow flex flex-col">
+        <div id="chat" class="flex-1 overflow-y-auto pr-1 space-y-4">
+          <!-- messages render here -->
+        </div>
+
+        <div class="mt-4 grid grid-cols-[1fr,auto] gap-2">
+          <textarea id="message" rows="2" placeholder="Type your message… (Enter to send · Shift+Enter for newline · Ctrl+K to focus)"
+            class="col-span-1 px-3 py-2 rounded-lg bg-gray-900/70 border border-white/10 prose focus:outline-none focus:ring-2 focus:ring-purple-500"></textarea>
+
+          <button id="send" class="btn px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white">
+            Send
+          </button>
+        </div>
+        <div class="mt-2 text-xs text-gray-500">
+          API: <span id="api-base" class="text-gray-300"></span>
+          <span class="mx-2">•</span>
+          <span>Shift+C to clear</span>
+        </div>
+      </section>
+    </main>
+
+    <!-- Settings Drawer -->
+    <div id="settings"
+      class="fixed inset-0 hidden items-end md:items-center justify-center bg-black/40 p-4 z-50">
+      <div class="glass w-full max-w-lg rounded-2xl border border-white/10 p-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-semibold">Settings</h3>
+          <button id="settings-close" class="btn px-3 py-1 rounded-lg bg-gray-800/60 hover:bg-gray-800">Close</button>
+        </div>
+        <div class="mt-4 grid gap-3">
+          <label class="text-sm text-gray-300">API Base URL</label>
+          <input id="setting-api" type="text"
+            placeholder="http://localhost:8000"
+            class="px-3 py-2 rounded-lg bg-gray-900/70 border border-white/10 focus:outline-none focus:ring-2 focus:ring-purple-500" />
+          <p class="text-xs text-gray-400">
+            This is where requests are sent. If you run the server on another machine or port, update it here.
+          </p>
+        </div>
+        <div class="mt-4 flex items-center justify-end gap-2">
+          <button id="settings-reset" class="btn px-3 py-2 rounded-lg bg-gray-800/60 hover:bg-gray-800">Reset</button>
+          <button id="settings-save" class="btn px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white">Save</button>
+        </div>
+      </div>
     </div>
 
     <script>
-      // RENDER 3D AVATAR
-      const container = document.getElementById("avatar-canvas-container");
-      const scene = new THREE.Scene();
-      const camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 1000);
-      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-      renderer.setSize(container.clientWidth, container.clientHeight);
-      container.appendChild(renderer.domElement);
+      // =========================
+      // Utilities & State
+      // =========================
+      const el = (id) => document.getElementById(id);
+      const CHAT = el('chat');
+      const MESSAGE = el('message');
+      const SEND = el('send');
+      const USE_WEB = el('use-web');
+      const WEB_QUERY = el('web-query');
+      const URLS = el('urls');
+      const ANCHOR_TAGS = el('anchor-tags');
 
-      const geometry = new THREE.SphereGeometry(1, 64, 64);
-      const material = new THREE.ShaderMaterial({
-        uniforms: {
-          time: { value: 0.0 }
-        },
+      const SETTINGS = el('settings');
+      const BTN_SETTINGS = el('btn-settings');
+      const BTN_SETTINGS_CLOSE = el('settings-close');
+      const BTN_SETTINGS_SAVE = el('settings-save');
+      const BTN_SETTINGS_RESET = el('settings-reset');
+      const BTN_CLEAR = el('btn-clear');
+      const API_BASE_TEXT = el('api-base');
+      const SETTING_API = el('setting-api');
+
+      const LS_KEY_API = 'ember.apiBase';
+      const LS_KEY_HISTORY = 'ember.chatHistory';
+
+      function getApiBase() {
+        return localStorage.getItem(LS_KEY_API) || 'http://localhost:8000';
+      }
+      function setApiBase(v) {
+        localStorage.setItem(LS_KEY_API, v);
+        API_BASE_TEXT.textContent = v;
+      }
+
+      // load last base URL
+      setApiBase(getApiBase());
+      SETTING_API.value = getApiBase();
+
+      // =========================
+      // Three.js Avatar
+      // =========================
+      const avatarContainer = el('avatar-canvas');
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      function resizeAvatar() {
+        const w = avatarContainer.clientWidth;
+        const h = avatarContainer.clientHeight;
+        renderer.setSize(w, h, false);
+        renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      avatarContainer.appendChild(renderer.domElement);
+      resizeAvatar();
+      window.addEventListener('resize', resizeAvatar);
+
+      // reactive shader sphere
+      const uniforms = {
+        time: { value: 0.0 },
+        hue: { value: 0.78 }, // ~280deg / 360
+        amp: { value: 0.6 },  // reactivity
+      };
+      const geo = new THREE.SphereGeometry(1, 96, 96);
+      const mat = new THREE.ShaderMaterial({
+        uniforms,
         vertexShader: `
+          uniform float time;
+          uniform float amp;
+          varying vec3 vPos;
           varying vec2 vUv;
-          void main() {
+          void main(){
             vUv = uv;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            vec3 p = position;
+            float n = sin(p.x*3.2 + time*1.2)*0.02 + cos(p.y*4.1 + time*0.8)*0.02;
+            p += normal * n * amp;
+            vPos = p;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
           }
         `,
         fragmentShader: `
           uniform float time;
+          uniform float hue;
           varying vec2 vUv;
-          void main() {
-            vec2 uv = vUv;
-            float r = 0.5 + 0.5 * sin(time + uv.x * 10.0);
-            float g = 0.5 + 0.5 * sin(time + uv.y * 10.0);
-            float b = 0.5 + 0.5 * sin(time + uv.x * 5.0 + uv.y * 5.0);
-            gl_FragColor = vec4(r, g, b, 1.0);
+          float sat = 0.75;
+          float val = 0.9;
+          vec3 hsv2rgb(vec3 c){
+            vec3 p = abs(fract(c.xxx + vec3(0., 2./6., 4./6.)) * 6. - 3.);
+            vec3 rgb = c.z * mix(vec3(1.), clamp(p - 1., 0., 1.), c.y);
+            return rgb;
           }
-        `
+          void main() {
+            float r = 0.5 + 0.5 * sin(time*0.8 + vUv.x*8.);
+            float mixv = mix(0.35, 1.0, r);
+            vec3 col = hsv2rgb(vec3(hue, sat, val * mixv));
+            gl_FragColor = vec4(col, 0.95);
+          }
+        `,
+        transparent: true,
+      });
+      const sphere = new THREE.Mesh(geo, mat);
+      scene.add(sphere);
+      const light = new THREE.DirectionalLight(0xffffff, 0.8);
+      light.position.set(2, 2, 2);
+      scene.add(light);
+      camera.position.z = 2.6;
+
+      // Controls -> shader uniforms
+      el('reactivity').addEventListener('input', (e) => {
+        uniforms.amp.value = parseFloat(e.target.value) / 100;
+      });
+      el('hue').addEventListener('input', (e) => {
+        uniforms.hue.value = (parseFloat(e.target.value) % 360) / 360;
       });
 
-      const sphere = new THREE.Mesh(geometry, material);
-      scene.add(sphere);
-      camera.position.z = 3;
-
-      function animateAvatar() {
-        requestAnimationFrame(animateAvatar);
-        material.uniforms.time.value += 0.03;
-        sphere.rotation.y += 0.005;
+      function tickAvatar() {
+        requestAnimationFrame(tickAvatar);
+        uniforms.time.value += 0.016;
+        sphere.rotation.y += 0.0025;
         renderer.render(scene, camera);
       }
-      animateAvatar();
+      tickAvatar();
 
-      // CHAT SYSTEM
-      function appendMessage(sender, text, isLoading = false) {
-        const chat = document.getElementById("chat");
-        const div = document.createElement("div");
-        div.className = `mb-3 ${sender === "Neural" ? 'text-purple-300' : 'text-green-300'}`;
-        div.innerHTML = `<strong>${sender}:</strong> <span class="text-gray-200">${text}</span>`;
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
+      // Animate avatar on assistant messages
+      function pulseAvatar() {
+        const base = uniforms.amp.value;
+        let t = 0;
+        const id = setInterval(() => {
+          t += 1;
+          uniforms.amp.value = base + Math.sin(t / 2) * 0.15;
+          if (t > 18) { // ~300ms * 18 ~ 5.4s max
+            uniforms.amp.value = base;
+            clearInterval(id);
+          }
+        }, 300);
       }
 
-      function replaceLastMessage(sender, text) {
-        const chat = document.getElementById("chat");
-        if (chat.lastChild) {
-          chat.lastChild.innerHTML = `<strong>${sender}:</strong> <span class="text-gray-200">${text}</span>`;
-          chat.scrollTop = chat.scrollHeight;
-        }
+      // =========================
+      // Chat helpers
+      // =========================
+      function saveHistory() {
+        localStorage.setItem(LS_KEY_HISTORY, CHAT.innerHTML);
+      }
+      function loadHistory() {
+        const html = localStorage.getItem(LS_KEY_HISTORY);
+        if (html) CHAT.innerHTML = html;
+      }
+      loadHistory();
+
+      function renderMarkdown(md) {
+        marked.setOptions({
+          breaks: true,
+          highlight(code, lang) {
+            try { return hljs.highlight(code, { language: lang }).value; }
+            catch { return hljs.highlightAuto(code).value; }
+          }
+        });
+        const dirty = marked.parse(md || "");
+        return DOMPurify.sanitize(dirty);
+      }
+
+      function messageBubble(sender, html, role = 'assistant') {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg';
+        const isUser = role === 'user';
+        wrap.innerHTML = `
+          <div class="flex ${isUser ? 'justify-end' : 'justify-start'}">
+            <div class="max-w-[92%] md:max-w-[75%] rounded-xl px-3 py-2 border ${isUser
+              ? 'bg-indigo-600/70 border-indigo-400/40'
+              : 'bg-gray-900/70 border-white/10'}">
+              <div class="text-xs opacity-70 mb-1">${sender}</div>
+              <div class="chat-md prose prose-invert text-sm">${html}</div>
+            </div>
+          </div>
+        `;
+        CHAT.appendChild(wrap);
+        CHAT.scrollTop = CHAT.scrollHeight;
+        saveHistory();
+        if (!isUser) pulseAvatar();
+      }
+
+      function appendUser(text) {
+        const html = renderMarkdown(text);
+        messageBubble('You', html, 'user');
+      }
+
+      function appendAssistant(text) {
+        const html = renderMarkdown(text);
+        messageBubble('Neural', html, 'assistant');
+      }
+
+      function setThinking() {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg';
+        wrap.id = 'thinking';
+        wrap.innerHTML = `
+          <div class="flex justify-start">
+            <div class="max-w-[92%] md:max-w-[75%] rounded-xl px-3 py-2 border bg-gray-900/70 border-white/10">
+              <div class="text-xs opacity-70 mb-1">Neural</div>
+              <div class="text-sm text-purple-300 animate-pulse">Thinking…</div>
+            </div>
+          </div>
+        `;
+        CHAT.appendChild(wrap);
+        CHAT.scrollTop = CHAT.scrollHeight;
+        saveHistory();
+      }
+
+      function replaceThinkingWith(text) {
+        const t = el('thinking');
+        if (!t) { appendAssistant(text); return; }
+        const html = renderMarkdown(text);
+        t.outerHTML = `
+          <div class="msg">
+            <div class="flex justify-start">
+              <div class="max-w-[92%] md:max-w-[75%] rounded-xl px-3 py-2 border bg-gray-900/70 border-white/10">
+                <div class="text-xs opacity-70 mb-1">Neural</div>
+                <div class="chat-md prose prose-invert text-sm">${html}</div>
+              </div>
+            </div>
+          </div>
+        `;
+        CHAT.scrollTop = CHAT.scrollHeight;
+        saveHistory();
+        pulseAvatar();
       }
 
       async function sendMessage() {
-        const input = document.getElementById("message");
-        const msg = input.value.trim();
+        const msg = (MESSAGE.value || '').trim();
         if (!msg) return;
 
-        appendMessage("You", msg);
-        input.value = "";
-        appendMessage("Neural", "<span class='animate-pulse text-purple-500'>Thinking...</span>", true);
+        appendUser(msg);
+        MESSAGE.value = '';
+        setThinking();
+
+        // Build payload
+        const payload = {
+          message: msg,
+          use_web: USE_WEB.checked,
+          web_query: (WEB_QUERY.value || '').trim() || null,
+          urls: (URLS.value || '')
+            .split('\n')
+            .map(s => s.trim())
+            .filter(Boolean),
+          anchor_tags: (ANCHOR_TAGS.value || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean),
+        };
+        if (!payload.urls.length) delete payload.urls;
+        if (!payload.anchor_tags.length) delete payload.anchor_tags;
 
         try {
-          const res = await fetch("http://localhost:8000/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: msg }),
+          const res = await fetch(`${getApiBase()}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
           });
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`HTTP ${res.status}: ${errText}`);
+          }
           const data = await res.json();
-          replaceLastMessage("Neural", data.response);
+          // Your API returns { reply: "..." }
+          replaceThinkingWith(data.reply ?? '(No reply)');
         } catch (err) {
-          replaceLastMessage("Neural", "[Connection error. Neural is unreachable.]");
+          replaceThinkingWith(`**Connection error**: ${String(err)}`);
         }
       }
+
+      // =========================
+      // Events
+      // =========================
+      SEND.addEventListener('click', sendMessage);
+      MESSAGE.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd+K to focus
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+          e.preventDefault();
+          MESSAGE.focus();
+          return;
+        }
+        // Shift+C to clear chat
+        if (e.shiftKey && e.key.toLowerCase() === 'c') {
+          e.preventDefault();
+          clearChat();
+        }
+      });
+
+      function clearChat() {
+        CHAT.innerHTML = '';
+        saveHistory();
+      }
+      BTN_CLEAR.addEventListener('click', clearChat);
+
+      // Settings open/close/save
+      function openSettings() { SETTINGS.classList.remove('hidden'); SETTINGS.classList.add('flex'); }
+      function closeSettings() { SETTINGS.classList.add('hidden'); SETTINGS.classList.remove('flex'); }
+      BTN_SETTINGS.addEventListener('click', openSettings);
+      BTN_SETTINGS_CLOSE.addEventListener('click', closeSettings);
+      BTN_SETTINGS_SAVE.addEventListener('click', () => {
+        const val = (SETTING_API.value || '').trim() || 'http://localhost:8000';
+        setApiBase(val);
+        closeSettings();
+      });
+      BTN_SETTINGS_RESET.addEventListener('click', () => {
+        setApiBase('http://localhost:8000');
+        SETTING_API.value = getApiBase();
+      });
+
+      // Show base in footer
+      API_BASE_TEXT.textContent = getApiBase();
     </script>
   </body>
 </html>
