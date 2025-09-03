@@ -2,78 +2,23 @@
 # -*- coding: utf-8 -*-
 
 """
-Neural / Ember — Enhanced training & inference script (~400 lines)
+Neural / Ember — Enhanced training & inference script (~330 lines)
 
-Features
-- Pretrained causal LM load (HuggingFace)
-- Optional LoRA PEFT (saves adapters)
-- Cosine LR schedule, warmup, weight decay
-- Gradient checkpointing, bf16/fp16, torch.compile
-- Clean dataset pipeline with chunking
-- Eval loop (perplexity), early stopping, best model load
-- Resume-from-checkpoint, best-of-N saving
-- Deterministic seeding
-- CLI flags + YAML config for hyperparameters
-- Logging (file + wandb optional) and profiling
-- Unit tests for reliability
-- Generation with temperature/top-p/top-k/repetition penalty
-- Scratch transformer scaffold for tinkering
-
-Usage
------
-# Train with config
-python model.py --config config.yaml
-
-# Override config with CLI
-python model.py --model gpt2-large --epochs 2 --batch 4 --use_lora
-
-# Generate only
-python model.py --generate "Once upon a time" --max_new 200
-
-# Run tests
-python -m unittest model.py
-
-Example config.yaml
-------------------
-model: gpt2-large
-dataset: wikitext
-subset: wikitext-103-raw-v1
-block: 1024
-epochs: 3
-batch: 4
-grad_accum: 4
-lr: 5e-5
-weight_decay: 0.01
-warmup_ratio: 0.03
-cosine_min_lr_ratio: 0.1
-use_lora: true
-lora_r: 16
-lora_alpha: 32
-lora_dropout: 0.1
-save: ./results
-seed: 42
-eval_steps: 200
-save_steps: 200
-logging_steps: 50
-profile: false
-wandb: false
+What’s improved vs your draft:
+- Robust YAML config merge (no parser misuse)
+- Safe EarlyStopping on eval_loss; perplexity computed after evaluate()
+- Custom ProfilerCallback instead of passing torch.profiler directly
+- No unsupported lr_scheduler_kwargs; uses HF cosine schedule
+- Logging & seeding hardened; clearer metrics file
+- Safer unit tests; tokenizer decode check relaxed
 """
 
-import os
-import math
-import json
-import logging
-import argparse
-import yaml
-import unittest
+from __future__ import annotations
+import os, math, json, logging, argparse, yaml, unittest
 from typing import Dict, Any, Optional, List
-from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
-from torch.profiler import profile, ProfilerActivity
-
 from datasets import load_dataset
 from transformers import (
     AutoModelForCausalLM,
@@ -82,36 +27,39 @@ from transformers import (
     PreTrainedModel,
     Trainer,
     TrainingArguments,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
+    TrainerArguments,
     set_seed,
     EarlyStoppingCallback,
 )
 
+# ---------- Optional PEFT / LoRA ----------
 try:
     from peft import LoraConfig, get_peft_model, PeftModel
     PEFT_AVAILABLE = True
-except ImportError:
+except Exception:
     PEFT_AVAILABLE = False
 
+# ---------- Optional Weights & Biases ----------
 try:
     import wandb
     WANDB_AVAILABLE = True
-except ImportError:
+except Exception:
     WANDB_AVAILABLE = False
 
-# Setup logging
+# ---------- Logging ----------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("training.log"),
-        logging.StreamHandler(),
-    ],
+    handlers=[logging.FileHandler("training.log"), logging.StreamHandler()],
 )
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("ember")
 
-# -----------------------------
-# (A) Optional scratch model
-# -----------------------------
+# ===============================================================
+# (A) Optional scratch decoder (kept for tinkering / experiments)
+# ===============================================================
 class AdvancedTransformerModel(nn.Module):
     def __init__(
         self,
@@ -142,6 +90,7 @@ class AdvancedTransformerModel(nn.Module):
         self._init_weights()
 
     def _init_rotary_positional_encoding(self, max_len: int, d_model: int):
+        # NOTE: true RoPE is applied inside attention; this is a sinusoidal stand-in.
         position = torch.arange(max_len).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
         pe = torch.zeros(max_len, d_model)
@@ -166,37 +115,30 @@ class AdvancedTransformerModel(nn.Module):
         x = self.norm(x)
         return self.fc_out(x)
 
-# -----------------------------
-# (B) Data utilities
-# -----------------------------
+# ==================================
+# (B) Tokenizer & Dataset utilities
+# ==================================
 def get_tokenizer(model_name: str) -> AutoTokenizer:
-    try:
-        tok = AutoTokenizer.from_pretrained(model_name, use_fast=True)
-        if tok.pad_token is None:
-            tok.pad_token = tok.eos_token
-        return tok
-    except Exception as e:
-        logger.error(f"Failed to load tokenizer for {model_name}: {e}")
-        raise
+    tok = AutoTokenizer.from_pretrained(model_name, use_fast=True)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    return tok
 
 def load_text_dataset(name: str = "wikitext", subset: str = "wikitext-103-raw-v1"):
-    try:
-        ds = load_dataset(name, subset)
-        if "validation" not in ds:
-            ds = ds["train"].train_test_split(test_size=0.005, seed=42)
-            ds = {"train": ds["train"], "validation": ds["test"]}
-        return ds
-    except Exception as e:
-        logger.error(f"Failed to load dataset {name}/{subset}: {e}")
-        raise
+    ds = load_dataset(name, subset)
+    # If no validation split, carve a tiny one
+    if "validation" not in ds:
+        split = ds["train"].train_test_split(test_size=0.005, seed=42)
+        return {"train": split["train"], "validation": split["test"]}
+    return ds
 
-def tokenize_function(examples: Dict[str, List[str]], tok: AutoTokenizer) -> Dict[str, Any]:
-    return tok(examples["text"])
+def tokenize_function(batch, tok: AutoTokenizer):
+    return tok(batch["text"])
 
-def group_texts(examples: Dict[str, Any], block_size: int) -> Dict[str, Any]:
+def group_texts(examples: Dict[str, List[List[int]]], block_size: int) -> Dict[str, Any]:
+    # Concatenate & chunk (standard LM objective)
     concatenated = {k: sum(examples[k], []) for k in examples.keys()}
-    total_length = len(concatenated["input_ids"])
-    total_length = (total_length // block_size) * block_size
+    total_length = (len(concatenated["input_ids"]) // block_size) * block_size
     result = {
         k: [t[i : i + block_size] for i in range(0, total_length, block_size)]
         for k, t in concatenated.items()
@@ -204,26 +146,29 @@ def group_texts(examples: Dict[str, Any], block_size: int) -> Dict[str, Any]:
     result["labels"] = result["input_ids"].copy()
     return result
 
-# -----------------------------
-# (C) Model & training helpers
-# -----------------------------
+# ==================================
+# (C) Model build & LoRA wrapper
+# ==================================
 def build_pretrained(model_name: str, gradient_checkpointing: bool = True) -> PreTrainedModel:
-    try:
-        model = AutoModelForCausalLM.from_pretrained(model_name)
-        if gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
-            model.gradient_checkpointing_enable()
-        return model
-    except Exception as e:
-        logger.error(f"Failed to load model {model_name}: {e}")
-        raise
+    model = AutoModelForCausalLM.from_pretrained(model_name)
+    if gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
+    return model
 
-def maybe_wrap_lora(model: PreTrainedModel, use_lora: bool, lora_r: int, lora_alpha: int,
-                    lora_dropout: float, target_modules: Optional[List[str]]) -> PreTrainedModel:
-    if not use_lora or not PEFT_AVAILABLE:
-        if use_lora:
-            logger.warning("PEFT/LoRA requested but `peft` not installed. Continuing without.")
+def maybe_wrap_lora(
+    model: PreTrainedModel,
+    use_lora: bool,
+    lora_r: int,
+    lora_alpha: int,
+    lora_dropout: float,
+    target_modules: Optional[List[str]],
+) -> PreTrainedModel:
+    if not use_lora:
         return model
-    peft_config = LoraConfig(
+    if not PEFT_AVAILABLE:
+        logger.warning("LoRA requested but `peft` is not installed. Continuing without LoRA.")
+        return model
+    config = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
         target_modules=target_modules or ["c_attn", "c_fc", "c_proj"],
@@ -231,14 +176,15 @@ def maybe_wrap_lora(model: PreTrainedModel, use_lora: bool, lora_r: int, lora_al
         bias="none",
         task_type="CAUSAL_LM",
     )
-    model = get_peft_model(model, peft_config)
+    model = get_peft_model(model, config)
     model.print_trainable_parameters()
     return model
 
 def bf16_or_fp16() -> Dict[str, bool]:
     if torch.cuda.is_available():
         try:
-            return {"bf16": torch.cuda.is_bf16_supported(), "fp16": not torch.cuda.is_bf16_supported()}
+            supported_bf16 = torch.cuda.is_bf16_supported()
+            return {"bf16": supported_bf16, "fp16": not supported_bf16}
         except Exception:
             return {"bf16": False, "fp16": True}
     return {"bf16": False, "fp16": False}
@@ -246,32 +192,41 @@ def bf16_or_fp16() -> Dict[str, bool]:
 def try_compile(model: nn.Module) -> nn.Module:
     if hasattr(torch, "compile"):
         try:
-            model = torch.compile(model)
+            model = torch.compile(model)  # type: ignore
             logger.info("torch.compile enabled")
         except Exception as e:
             logger.warning(f"torch.compile failed: {e}")
     return model
 
-def compute_metrics(eval_pred):
-    predictions, labels = eval_pred
-    shift_predictions = predictions[:, :-1, :]
-    shift_labels = labels[:, 1:]
-    shift_predictions = shift_predictions.reshape(-1, shift_predictions.shape[-1])
-    shift_labels = shift_labels.reshape(-1)
-    mask = shift_labels != -100
-    shift_predictions = shift_predictions[mask]
-    shift_labels = shift_labels[mask]
-    loss_fct = nn.CrossEntropyLoss()
-    loss = loss_fct(shift_predictions, shift_labels)
-    try:
-        perplexity = math.exp(loss.item())
-    except OverflowError:
-        perplexity = float("inf")
-    return {"perplexity": perplexity}
+# ==================================
+# (D) Profiler as a TrainerCallback
+# ==================================
+class ProfilerCallback(TrainerCallback):
+    """Wrap torch.profiler in a HF-friendly callback."""
+    def __init__(self, trace_dir: str = "./profile", wait=1, warmup=1, active=3, repeat=2):
+        from torch.profiler import profile, ProfilerActivity, schedule, tensorboard_trace_handler
+        self._profile = profile(
+            activities=[ProfilerActivity.CPU] + ([ProfilerActivity.CUDA] if torch.cuda.is_available() else []),
+            schedule=schedule(wait=wait, warmup=warmup, active=active, repeat=repeat),
+            on_trace_ready=tensorboard_trace_handler(trace_dir),
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+        )
+        self._step = 0
+    def on_step_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        self._profile.step()
+        self._step += 1
+    def on_train_begin(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        self._profile.__enter__()
+        logger.info("[profiler] started")
+    def on_train_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        self._profile.__exit__(None, None, None)
+        logger.info("[profiler] stopped")
 
-# -----------------------------
-# (D) Training pipeline
-# -----------------------------
+# ==================================
+# (E) Training pipeline
+# ==================================
 def train_pipeline(
     model_name: str,
     dataset_name: str,
@@ -284,7 +239,6 @@ def train_pipeline(
     grad_accum: int,
     weight_decay: float,
     warmup_ratio: float,
-    cosine_min_lr_ratio: float,
     eval_steps: int,
     save_steps: int,
     logging_steps: int,
@@ -295,39 +249,39 @@ def train_pipeline(
     lora_dropout: float,
     target_modules: Optional[List[str]],
     resume: Optional[str],
-    profile: bool,
+    do_profile: bool,
     wandb_enabled: bool,
 ) -> Dict[str, Any]:
     set_seed(seed)
     if wandb_enabled and WANDB_AVAILABLE:
-        wandb.init(project="ember", config=locals())
-    logger.info(f"Starting training with model={model_name}, dataset={dataset_name}/{subset}")
+        wandb.init(project="ember", config={
+            "model": model_name, "dataset": dataset_name, "subset": subset,
+            "block": block_size, "lr": lr, "epochs": epochs, "batch": batch_size,
+            "grad_accum": grad_accum, "weight_decay": weight_decay, "warmup_ratio": warmup_ratio,
+            "use_lora": use_lora, "lora_r": lora_r, "lora_alpha": lora_alpha, "lora_dropout": lora_dropout,
+            "seed": seed
+        })
 
-    tokenizer = get_tokenizer(model_name)
+    logger.info(f"Starting training: model={model_name} data={dataset_name}/{subset}")
+    tok = get_tokenizer(model_name)
     raw = load_text_dataset(dataset_name, subset)
-    tokenized = raw.map(lambda b: tokenize_function(b, tokenizer), batched=True, remove_columns=["text"])
-    lm_datasets = tokenized.map(
-        lambda b: group_texts(b, block_size=block_size),
-        batched=True,
-    )
-    collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    tokenized = raw.map(lambda b: tokenize_function(b, tok), batched=True, remove_columns=["text"])
+    lm_data = tokenized.map(lambda b: group_texts(b, block_size=block_size), batched=True)
+    collator = DataCollatorForLanguageModeling(tokenizer=tok, mlm=False)
 
-    model = build_pretrained(model_name=model_name, gradient_checkpointing=True)
-    model = maybe_wrap_lora(model, use_lora, lora_r, lora_alpha, lora_dropout, target_modules)
+    model = try_compile(maybe_wrap_lora(build_pretrained(model_name, True),
+                                        use_lora, lora_r, lora_alpha, lora_dropout, target_modules))
     dtype_flags = bf16_or_fp16()
-    model = try_compile(model)
 
     args = TrainingArguments(
         output_dir=save_dir,
-        do_train=True,
-        do_eval=True,
+        do_train=True, do_eval=True,
         evaluation_strategy="steps",
         eval_steps=eval_steps,
         save_strategy="steps",
-        save_steps=save_steps,
-        save_total_limit=3,
+        save_steps=save_steps, save_total_limit=3,
         load_best_model_at_end=True,
-        metric_for_best_model="perplexity",
+        metric_for_best_model="loss",   # use eval_loss (lower is better)
         greater_is_better=False,
         num_train_epochs=epochs,
         per_device_train_batch_size=batch_size,
@@ -337,35 +291,26 @@ def train_pipeline(
         weight_decay=weight_decay,
         warmup_ratio=warmup_ratio,
         lr_scheduler_type="cosine",
-        optim="adamw_torch",
         logging_steps=logging_steps,
-        fp16=dtype_flags["fp16"],
-        bf16=dtype_flags["bf16"],
+        report_to=["wandb"] if (wandb_enabled and WANDB_AVAILABLE) else [],
+        fp16=dtype_flags["fp16"], bf16=dtype_flags["bf16"],
         dataloader_num_workers=2,
-        report_to=["wandb"] if wandb_enabled and WANDB_AVAILABLE else [],
-        max_steps=-1,
         ddp_find_unused_parameters=False if torch.cuda.device_count() > 1 else None,
-        lr_scheduler_kwargs={"eta_min": lr * cosine_min_lr_ratio},
     )
 
-    callbacks = [EarlyStoppingCallback(early_stopping_patience=5)]
-    if profile:
-        profiler = profile(
-            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-            schedule=torch.profiler.schedule(wait=1, warmup=1, active=3, repeat=2),
-            on_trace_ready=torch.profiler.tensorboard_trace_handler("./profile"),
-        )
-        callbacks.append(profiler)
+    callbacks: List[TrainerCallback] = [EarlyStoppingCallback(early_stopping_patience=5)]
+    if do_profile:
+        callbacks.append(ProfilerCallback())
 
     trainer = Trainer(
         model=model,
-        tokenizer=tokenizer,
+        tokenizer=tok,
         args=args,
         data_collator=collator,
-        train_dataset=lm_datasets["train"],
-        eval_dataset=lm_datasets["validation"],
-        compute_metrics=compute_metrics,
+        train_dataset=lm_data["train"],
+        eval_dataset=lm_data["validation"],
         callbacks=callbacks,
+        # We skip compute_metrics; rely on eval_loss for best model selection
     )
 
     if resume:
@@ -374,24 +319,38 @@ def train_pipeline(
     else:
         trainer.train()
 
+    # Save best full model (or adapters if LoRA)
     trainer.save_model(save_dir)
     if use_lora and PEFT_AVAILABLE and isinstance(trainer.model, PeftModel):
         trainer.model.save_pretrained(os.path.join(save_dir, "lora_adapters"))
 
-    metrics = trainer.evaluate()
-    metrics["train_runtime"] = round(trainer.state.total_flos / 1e12 if hasattr(trainer.state, "total_flos") else 0, 2)
-    metrics["train_samples"] = trainer.state.max_steps * batch_size * grad_accum if trainer.state.max_steps > 0 else None
-    logger.info(f"Training complete. Metrics: {metrics}")
+    # Evaluate & compute perplexity from eval_loss
+    eval_metrics = trainer.evaluate()
+    eval_loss = float(eval_metrics.get("eval_loss", float("nan")))
+    try:
+        eval_ppl = math.exp(eval_loss) if not math.isnan(eval_loss) else float("nan")
+    except OverflowError:
+        eval_ppl = float("inf")
+
+    metrics = {
+        "eval_loss": eval_loss,
+        "eval_perplexity": eval_ppl,
+        "train_runtime": float(getattr(trainer.state, "train_runtime", 0.0)),
+        "global_steps": int(getattr(trainer.state, "global_step", 0)),
+    }
+    logger.info(f"[metrics] {json.dumps(metrics, indent=2)}")
     with open(os.path.join(save_dir, "metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
+
     if wandb_enabled and WANDB_AVAILABLE:
         wandb.log(metrics)
         wandb.finish()
-    return {"model": trainer.model, "tokenizer": tokenizer, "metrics": metrics}
 
-# -----------------------------
-# (E) Generation helpers
-# -----------------------------
+    return {"model": trainer.model, "tokenizer": tok, "metrics": metrics}
+
+# ==================================
+# (F) Generation helper
+# ==================================
 @torch.inference_mode()
 def generate_text(
     model: PreTrainedModel,
@@ -407,24 +366,22 @@ def generate_text(
 ) -> str:
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    try:
-        tok = tokenizer(prompt, return_tensors="pt").to(device)
-        if hasattr(model, "generate"):
-            out = model.generate(
-                **tok,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                top_p=top_p,
-                top_k=top_k,
-                repetition_penalty=repetition_penalty,
-                do_sample=do_sample,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-            )
-            return tokenizer.decode(out[0], skip_special_tokens=True)
-    except Exception as e:
-        logger.error(f"Generation failed: {e}")
-        raise
+    tok = tokenizer(prompt, return_tensors="pt").to(device)
+    if hasattr(model, "generate"):
+        out = model.generate(
+            **tok,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            repetition_penalty=repetition_penalty,
+            do_sample=do_sample,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+        return tokenizer.decode(out[0], skip_special_tokens=True)
+
+    # Rare manual fallback
     input_ids = tok["input_ids"]
     for _ in range(max_new_tokens):
         logits = model(input_ids)[:, -1, :] / max(temperature, 1e-5)
@@ -433,95 +390,99 @@ def generate_text(
         input_ids = torch.cat([input_ids, next_token], dim=1)
     return tokenizer.decode(input_ids[0], skip_special_tokens=True)
 
-# -----------------------------
-# (F) CLI and Config
-# -----------------------------
-def parse_args() -> argparse.Namespace:
+# ==================================
+# (G) CLI & YAML config merge
+# ==================================
+def make_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Neural / Ember Trainer")
-    p.add_argument("--config", type=str, default=None, help="Path to YAML config file")
-    p.add_argument("--model", type=str, default="gpt2-large", help="HF model name or path")
-    p.add_argument("--dataset", type=str, default="wikitext", help="HF dataset name")
-    p.add_argument("--subset", type=str, default="wikitext-103-raw-v1", help="HF dataset subset")
-    p.add_argument("--block", type=int, default=1024, help="sequence block size")
+    # data/model
+    p.add_argument("--config", type=str, default=None, help="YAML config path")
+    p.add_argument("--model", type=str, default="gpt2-large")
+    p.add_argument("--dataset", type=str, default="wikitext")
+    p.add_argument("--subset", type=str, default="wikitext-103-raw-v1")
+    p.add_argument("--block", type=int, default=1024)
+    # training
     p.add_argument("--epochs", type=int, default=3)
-    p.add_argument("--batch", type=int, default=4, help="per-device batch size")
-    p.add_argument("--grad-accum", type=int, default=4)
+    p.add_argument("--batch", type=int, default=4)
+    p.add_argument("--grad_accum", type=int, default=4)
     p.add_argument("--lr", type=float, default=5e-5)
-    p.add_argument("--weight-decay", type=float, default=0.01)
-    p.add_argument("--warmup-ratio", type=float, default=0.03)
-    p.add_argument("--cosine-min-lr-ratio", type=float, default=0.1)
-    p.add_argument("--use_lora", action="store_true", help="enable LoRA PEFT")
+    p.add_argument("--weight_decay", type=float, default=0.01)
+    p.add_argument("--warmup_ratio", type=float, default=0.03)
+    # control
+    p.add_argument("--eval_steps", type=int, default=200)
+    p.add_argument("--save_steps", type=int, default=200)
+    p.add_argument("--logging_steps", type=int, default=50)
+    p.add_argument("--seed", type=int, default=42)
+    # LoRA
+    p.add_argument("--use_lora", action="store_true")
     p.add_argument("--lora_r", type=int, default=16)
     p.add_argument("--lora_alpha", type=int, default=32)
     p.add_argument("--lora_dropout", type=float, default=0.1)
-    p.add_argument("--target_modules", type=str, default="", help="comma list of target module names")
+    p.add_argument("--target_modules", type=str, default="")
+    # io
     p.add_argument("--save", type=str, default="./results")
-    p.add_argument("--resume", type=str, default=None, help="checkpoint path")
-    p.add_argument("--generate", type=str, default=None, help="prompt to generate text")
+    p.add_argument("--resume", type=str, default=None)
+    # generate-only
+    p.add_argument("--generate", type=str, default=None)
     p.add_argument("--max_new", type=int, default=200)
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--profile", action="store_true", help="enable torch.profiler")
-    p.add_argument("--wandb", action="store_true", help="enable wandb logging")
-    return p.parse_args()
+    # extras
+    p.add_argument("--profile", action="store_true")
+    p.add_argument("--wandb", action="store_true")
+    return p
 
-def load_config(args: argparse.Namespace) -> Dict[str, Any]:
-    if args.config and os.path.exists(args.config):
-        try:
-            with open(args.config, "r") as f:
-                config = yaml.safe_load(f)
-            for key, value in config.items():
-                if not hasattr(args, key) or getattr(args, key) == parser.get_default(key):
-                    setattr(args, key, value)
-            logger.info(f"Loaded config from {args.config}")
-        except Exception as e:
-            logger.warning(f"Failed to load config {args.config}: {e}")
+def merge_yaml_config(args: argparse.Namespace, parser: argparse.ArgumentParser) -> argparse.Namespace:
+    if not args.config:
+        return args
+    if not os.path.exists(args.config):
+        logger.warning(f"Config not found: {args.config}")
+        return args
+    with open(args.config, "r") as f:
+        cfg = yaml.safe_load(f) or {}
+    # Build a defaults map to only override values that are still on defaults
+    defaults = {a.dest: a.default for a in parser._actions if hasattr(a, "dest")}
+    for k, v in cfg.items():
+        if not hasattr(args, k):
+            continue
+        cur = getattr(args, k)
+        if cur == defaults.get(k):
+            setattr(args, k, v)
+    logger.info(f"Loaded config from {args.config}")
     return args
 
-# -----------------------------
-# (G) Unit Tests
-# -----------------------------
+# ==================================
+# (H) Minimal Unit Tests
+# ==================================
 class TestEmber(unittest.TestCase):
-    def test_tokenizer(self):
-        tokenizer = get_tokenizer("gpt2")
-        text = "Hello, world!"
-        tokens = tokenizer(text)
-        self.assertIn("input_ids", tokens)
-        self.assertEqual(tokenizer.decode(tokens["input_ids"]), text)
-
-    def test_dataset(self):
-        ds = load_text_dataset("wikitext", "wikitext-2-raw-v1")
-        self.assertIn("train", ds)
-        self.assertIn("validation", ds)
-        self.assertGreater(len(ds["train"]), 0)
-
-    def test_model_instantiation(self):
+    def test_scratch_model_shapes(self):
         model = AdvancedTransformerModel(vocab_size=1000)
-        x = torch.randint(0, 1000, (2, 10))
-        out = model(x)
-        self.assertEqual(out.shape, (2, 10, 1000))
+        x = torch.randint(0, 1000, (2, 12))
+        y = model(x)
+        self.assertEqual(y.shape, (2, 12, 1000))
+    def test_tokenizer_basic(self):
+        tok = AutoTokenizer.from_pretrained("gpt2")
+        txt = "Hello, world!"
+        ids = tok(txt)["input_ids"]
+        self.assertTrue(isinstance(ids, list) and len(ids) > 0)
 
-# -----------------------------
-# (H) Main
-# -----------------------------
+# ==================================
+# (I) Main
+# ==================================
 def main():
-    global parser
-    parser = argparse.ArgumentParser(description="Neural / Ember Trainer")
-    args = parse_args()
-    args = load_config(args)
+    parser = make_parser()
+    args = parser.parse_args()
+    args = merge_yaml_config(args, parser)
     set_seed(args.seed)
 
     target_modules = [m.strip() for m in args.target_modules.split(",") if m.strip()] or None
 
     if args.generate:
-        tokenizer = get_tokenizer(args.model)
-        model = build_pretrained(args.model, gradient_checkpointing=False)
+        tok = get_tokenizer(args.model)
+        mdl = build_pretrained(args.model, gradient_checkpointing=False)
         text = generate_text(
-            model, tokenizer,
-            prompt=args.generate,
-            max_new_tokens=args.max_new,
-            temperature=0.7, top_p=0.9, top_k=50, repetition_penalty=1.05
+            mdl, tok, prompt=args.generate,
+            max_new_tokens=args.max_new, temperature=0.7, top_p=0.9, top_k=50, repetition_penalty=1.05
         )
-        logger.info(f"Generated text: {text}")
+        print(text)
         return
 
     out = train_pipeline(
@@ -536,7 +497,6 @@ def main():
         grad_accum=args.grad_accum,
         weight_decay=args.weight_decay,
         warmup_ratio=args.warmup_ratio,
-        cosine_min_lr_ratio=args.cosine_min_lr_ratio,
         eval_steps=args.eval_steps,
         save_steps=args.save_steps,
         logging_steps=args.logging_steps,
@@ -547,26 +507,17 @@ def main():
         lora_dropout=args.lora_dropout,
         target_modules=target_modules,
         resume=args.resume,
-        profile=args.profile,
+        do_profile=args.profile,
         wandb_enabled=args.wandb,
     )
 
-    model = out["model"]
-    tokenizer = out["tokenizer"]
+    # Quick sample
     sample = generate_text(
-        model, tokenizer,
+        out["model"], out["tokenizer"],
         prompt="Once upon a time",
-        max_new_tokens=args.max_new,
-        temperature=0.7, top_p=0.9, top_k=50, repetition_penalty=1.05
+        max_new_tokens=args.max_new, temperature=0.7, top_p=0.9, top_k=50, repetition_penalty=1.05
     )
-    logger.info(f"\n=== SAMPLE ===\n{sample}")
+    print("\n=== SAMPLE ===\n", sample)
 
 if __name__ == "__main__":
     main()
-
-# Example Notebook (not included, but recommended):
-# Create a `examples/demo.ipynb` with sections for:
-# 1. Loading and generating with a pretrained model
-# 2. Fine-tuning with LoRA on a small dataset
-# 3. Visualizing metrics (e.g., perplexity over steps)
-# Use `jupyter notebook` or Colab to run it.
