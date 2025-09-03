@@ -125,12 +125,49 @@ main section {
   box-shadow: 0 4px 18px rgba(139,92,246,0.15);
 }
 
+/* Links inside messages */
+.user a, .assistant a {
+  color: #ddd6fe;
+  text-decoration: underline;
+  word-break: break-word;
+}
+.user a:hover, .assistant a:hover { color: #f5f3ff; }
+
+/* Inline code & pre blocks inside messages */
+.user code, .assistant code {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  padding: 0 .35em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: .95em;
+}
+.user pre, .assistant pre {
+  background: rgba(8,8,16,0.7);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+/* Pending bubble shimmer */
 .assistant.pending {
   color: var(--muted);
   font-style: italic;
   background: rgba(255,255,255,0.05);
   border: 1px dashed rgba(255,255,255,0.18);
+  position: relative;
+  overflow: hidden;
 }
+.assistant.pending::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
 
 /* Options row */
 #options {
@@ -154,6 +191,28 @@ main section {
   outline: none;
   border-color: var(--assistant);
   box-shadow: 0 0 0 3px rgba(139,92,246,0.25);
+}
+
+/* Mode row (API / Browser) */
+#mode-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0 6px;
+  color: var(--muted);
+}
+#mode-select {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(20,20,30,0.7);
+  color: var(--text);
+}
+
+/* HTTPS helper note */
+#https-note {
+  margin: 4px 0 10px;
+  color: var(--muted);
 }
 
 /* Input bar */
@@ -277,6 +336,11 @@ footer {
 #chat-box::-webkit-scrollbar-track { background: rgba(255,255,255,0.04); border-radius: 8px; }
 #chat-box::-webkit-scrollbar-thumb { background: rgba(139,92,246,0.5); border-radius: 8px; }
 #chat-box::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.7); }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
 
 /* Responsive tweaks */
 @media (max-width: 640px) {
