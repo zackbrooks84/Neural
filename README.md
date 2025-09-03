@@ -1,67 +1,108 @@
 # Neural
 
-Local LLM server with memory and identity anchors. Plus a tiny Transformer demo trainer.
+Neural is a local language model server with long‑term memory, identity
+anchors, web retrieval tools and a tiny Transformer training demo.
 
-## Mode 1 — Local LLM server
+## Features
+
+- **FastAPI server** for running GGUF models locally with a simple chat
+  endpoint and web UI.
+- **Vector memory** that stores conversation snippets on disk and retrieves
+  relevant context for new queries.
+- **Identity anchors** that rotate into the system prompt. Anchors live in
+  `src/identity/anchors.yaml` and can also be managed at run time.
+- **Web tools** for DuckDuckGo search and robust URL fetching with PDF and
+  YouTube transcript extraction.
+- **Static client** in `docs/` suitable for GitHub Pages.
+- **Tiny Transformer trainer** in `model.py` as a minimal example.
+
+## Getting started
+
 1. Python 3.11
-2. Create venv and activate
-3. pip install -r requirements.txt
-4. Put a GGUF model into ./models for example llama-3.1-8b-instruct.Q4_K_M.gguf
-5. Edit config.yaml to match the filename
-6. Start: python -m uvicorn src.app:app --host 127.0.0.1 --port 8000
-7. Test:
-   curl -s http://localhost:8000/health
-   curl -s http://localhost:8000/chat -H "Content-Type: application/json" -d '{"message":"Say hi in one sentence"}'
-8. Open http://localhost:8000/ in a browser for a simple web chat interface
+2. Create and activate a virtual environment
+3. `pip install -r requirements.txt`
+4. Place a GGUF model in `./models/` (e.g. `llama-3.1-8b-instruct.Q4_K_M.gguf`)
+5. Update `config.yaml` to reference the model filename
+6. Launch the server:
 
-Customize identity in src/identity/anchors.yaml
-Run-time anchors can also be managed via the API:
+   ```bash
+   python -m uvicorn src.app:app --host 127.0.0.1 --port 8000
+   ```
 
+### Quick test
+
+```bash
+curl -s http://localhost:8000/health
+curl -s http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Say hi in one sentence"}'
 ```
-curl -s http://localhost:8000/anchors            # list anchors
+
+Open `http://localhost:8000/` for a minimal web chat client.
+
+## Customizing identity and memory
+
+Edit `src/identity/anchors.yaml` to define default anchors. Manage anchors via
+API calls at run time:
+
+```bash
+curl -s http://localhost:8000/anchors
 curl -s -X POST http://localhost:8000/anchors \
   -H "Content-Type: application/json" \
   -d '{"anchor":"Ember loves open source"}'
 ```
-Anchors are rotated per query and may be injected only at session start
-depending on `anchor_injection` and `anchors_per_query` in config.yaml.
 
-### Internet search in chat
+Anchors are rotated per query and may be injected only at session start based on
+`anchor_injection` and `anchors_per_query` in `config.yaml`. Conversation memory
+is persisted to `data/` and retrieved as context for future queries.
+
+## Web search and URL fetching
+
+```bash
 curl -s http://127.0.0.1:8000/chat \
   -H "Content-Type: application/json" \
-  -d '{"message":"What is new at Gobekli Tepe?", "use_web": true}'
+  -d '{"message":"What is new at Göbekli Tepe?", "use_web": true}'
 
-### Fetch specific URLs
 curl -s http://127.0.0.1:8000/chat \
   -H "Content-Type: application/json" \
   -d '{"message":"Summarize these pages", "urls":["https://example.com/a","https://example.com/b"]}'
 
-### Direct search/fetch
 curl -s "http://127.0.0.1:8000/search?q=thorium%20reactors"
 curl -s "http://127.0.0.1:8000/fetch?url=https://arxiv.org/abs/2407.12345"
+```
 
-The fetch endpoint automatically extracts text from PDFs and can pull transcripts from YouTube videos.
+`fetch` automatically extracts text from PDFs and can pull transcripts from
+YouTube videos. Allowed domains and file types are controlled in the `web`
+section of `config.yaml`.
 
-### GitHub Pages web UI
+## GitHub Pages web UI
 
-Static files in `docs/` provide a lightweight chat client that can be hosted
-with GitHub Pages. Enable Pages for the repository and point it at the `docs`
-folder. A `.nojekyll` file is included so that GitHub Pages serves the static
-assets as-is without running them through Jekyll. The page automatically
-populates the API base URL, using the current origin when accessed locally and
-otherwise pointing to `localhost:8000` on the same protocol (e.g.,
-`https://localhost:8000` when served over HTTPS). A field remains available to
-override this value if needed.
+Static files in `docs/` provide a lightweight chat client. Enable GitHub Pages
+for the repository and point it at the `docs` folder. The included `.nojekyll`
+file ensures assets are served as‑is. The page auto‑detects the API base URL and
+defaults to `localhost:8000`; a field is provided to override this if needed.
 
-### Security
+## Tiny Transformer trainer
+
+`model.py` contains a minimal Transformer training example:
+
+```bash
+python model.py
+```
+
+## Security
+
 By default the server binds only to localhost. URL fetching is limited to
 domains and file types listed in the `web` section of `config.yaml` to reduce
 the risk of downloading malicious content.
 
-## Mode 2 — Tiny trainer
-Your original model.py stays. Run: python model.py
+## Repository layout
 
-## Repo layout
+```
+config.yaml
+data/       # auto created for memory
+docs/       # static web UI
+models/     # place GGUF weights here (not committed)
 scripts/
 src/
   app.py
@@ -69,8 +110,10 @@ src/
   memory/store.py
   identity/anchors.yaml
 tests/
-models/   do not commit weights
-data/     auto created for memory
-config.yaml
 requirements.txt
 model.py
+```
+
+## License
+
+[MIT License](LICENSE)
