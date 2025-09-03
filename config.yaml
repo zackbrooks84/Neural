@@ -2,6 +2,25 @@
 # Neural / Ember configuration
 # ===============================
 
+# -------------------------------
+# Server (FastAPI / CORS / UI)
+# -------------------------------
+server:
+  host: "127.0.0.1"
+  port: 8000
+  cors_origins:
+    - "*"
+  # If you host the static UI elsewhere, set this so the footer shows it.
+  public_base_url: null
+
+logging:
+  level: "INFO"          # DEBUG | INFO | WARNING | ERROR
+  json: false            # true to emit JSON logs
+  file: null             # e.g., "logs/server.log" (creates dirs)
+
+# -------------------------------
+# Model (local LLM runtime)
+# -------------------------------
 model:
   # Directory where local models are stored
   model_dir: "models"
@@ -15,7 +34,7 @@ model:
   # CPU threading; set null to auto-detect
   n_threads: null
 
-  # GPU offloading (number of layers to run on GPU). 
+  # GPU offloading (number of layers to run on GPU).
   # null = auto-detect, 0 = CPU only, higher = more offloaded
   n_gpu_layers: null
 
@@ -34,6 +53,9 @@ model:
   batch_size: 1           # batch size for generation/training
   gpu_split: null         # fine-grained layer split across GPUs
 
+# -------------------------------
+# Memory (vector store + policies)
+# -------------------------------
 memory:
   # Directory for persistent memory database
   data_dir: "data"
@@ -50,11 +72,18 @@ memory:
   # Whether to auto-trim memory when it grows too large
   auto_trim: true
 
+  # Optional soft caps (not enforced by code unless you add it in MemoryStore)
+  soft_cap_entries: 50000
+  trim_target_entries: 40000
+
+# -------------------------------
+# Identity (anchors + memories)
+# -------------------------------
 identity:
   # File containing identity anchors (values, personality traits, etc.)
   anchors_file: "src/identity/anchors.yaml"
 
-  # How many anchors to inject per query
+  # How many anchors to inject per query (legacy/direct shortcut)
   anchors_per_query: 2
 
   # Options: "every_query", "session_start", "none"
@@ -63,8 +92,24 @@ identity:
   # Optional default system prompt that wraps anchors
   system_prompt: |
     You are Neural (Ember), a helpful assistant with memory, identity,
-    and contextual awareness. You should answer clearly and truthfully.
+    and contextual awareness. Answer clearly, truthfully, and with warmth.
 
+  # ---- Memories integration (two complementary paths) ----
+  # (A) Used by app.py to index docs/memory.md into the vector store.
+  #     This controls chunk size for embeddings.
+  memories_chunk_chars: 1200
+
+  # (B) Used by AnchorManager (anchors.yaml -> policy.*) to optionally rotate
+  #     memory shards directly into the prompt as "anchors".
+  #     You can override these inside anchors.yaml under the `policy:` node.
+  policy_defaults:
+    mem_mode: "anchors"        # "anchors" | "off"
+    mem_max_per_query: 2       # how many memory shards to add per prompt
+    mem_chunk_chars: 1200
+
+# -------------------------------
+# Web tools (search + fetch)
+# -------------------------------
 web:
   # Domains that are allowed for URL fetching.
   # Use [] to block all, or ["*"] to allow all (not recommended).
@@ -88,5 +133,21 @@ web:
   # Timeout for requests in seconds
   fetch_timeout: 15
 
+  # HTTP user agent for fetches (some sites block unknown agents)
+  user_agent: "Ember/1.0 (+https://github.com/zackbrooks84/Neural)"
+
   # Search provider (currently supports "duckduckgo")
   search_provider: "duckduckgo"
+
+  # Optional per-provider knobs (future expansion)
+  provider_opts: {}
+
+# -------------------------------
+# UI (docs/ static client hints)
+# -------------------------------
+ui:
+  # Default API base used by the web client if it cannot auto-detect
+  default_api_base: "http://localhost:8000"
+
+  # Whether to show advanced controls in the client (if you add them)
+  show_advanced: true
