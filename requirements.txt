@@ -15,3 +15,6 @@ youtube-transcript-api==1.2.2
 pypdf==6.0.0
 tf-keras==2.19.0
 tensorflow==2.19.1
+torch
+transformers
+datasets
