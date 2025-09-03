@@ -2,11 +2,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from datasets import load_dataset
-from transformers import AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
 class TransformerModel(nn.Module):
-    def __init__(self, vocab_size: int, d_model: int = 512, nhead: int = 8,
-                 num_layers: int = 6, dim_feedforward: int = 2048,
+    def __init__(self, vocab_size: int, d_model: int = 768, nhead: int = 12,
+                 num_layers: int = 12, dim_feedforward: int = 3072,
                  max_len: int = 512) -> None:
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
@@ -15,6 +15,8 @@ class TransformerModel(nn.Module):
             d_model=d_model,
             nhead=nhead,
             dim_feedforward=dim_feedforward,
+            activation="gelu",
+            dropout=0.1,
         )
         self.transformer_encoder = nn.TransformerEncoder(
             encoder_layer,
@@ -33,6 +35,8 @@ class TransformerModel(nn.Module):
 
 def prepare_data(tokenizer: AutoTokenizer, dataset_name: str = "wikitext",
                  subset: str = "wikitext-2-raw-v1", block_size: int = 128):
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
     dataset = load_dataset(dataset_name, subset)
 
     def tokenize(batch):
@@ -66,8 +70,12 @@ def train_model(model: nn.Module, dataset, epochs: int = 1, batch_size: int = 4)
             inputs = batch["input_ids"]
             targets = batch["labels"]
             optimizer.zero_grad()
-            logits = model(inputs)
-            loss = criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
+            if isinstance(model, PreTrainedModel):
+                outputs = model(input_ids=inputs, labels=targets)
+                loss = outputs.loss
+            else:
+                logits = model(inputs)
+                loss = criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
             loss.backward()
             optimizer.step()
         print(f"Epoch {epoch + 1}, Loss {loss.item():.4f}")
@@ -75,17 +83,27 @@ def train_model(model: nn.Module, dataset, epochs: int = 1, batch_size: int = 4)
 
 def generate_text(model: nn.Module, tokenizer: AutoTokenizer, prompt: str, max_tokens: int = 50) -> str:
     model.eval()
-    tokens = tokenizer(prompt, return_tensors="pt")["input_ids"]
+    tokens = tokenizer(prompt, return_tensors="pt")
+    if hasattr(model, "generate"):
+        generated = model.generate(**tokens, max_new_tokens=max_tokens)
+        return tokenizer.decode(generated[0], skip_special_tokens=True)
+    input_ids = tokens["input_ids"]
     for _ in range(max_tokens):
-        logits = model(tokens)
+        logits = model(input_ids)
         next_token = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
-        tokens = torch.cat([tokens, next_token], dim=1)
-    return tokenizer.decode(tokens[0])
+        input_ids = torch.cat([input_ids, next_token], dim=1)
+    return tokenizer.decode(input_ids[0])
+
+
+def load_pretrained_model(model_name: str = "gpt2") -> PreTrainedModel:
+    """Load a pretrained causal language model from Hugging Face."""
+    return AutoModelForCausalLM.from_pretrained(model_name)
 
 
 if __name__ == "__main__":
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    model_name = "gpt2"
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
     tokenized_dataset = prepare_data(tokenizer)
-    model = TransformerModel(vocab_size=tokenizer.vocab_size)
+    model = load_pretrained_model(model_name)
     train_model(model, tokenized_dataset, epochs=1, batch_size=2)
     print(generate_text(model, tokenizer, "Once upon a time"))
