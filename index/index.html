@@ -9,7 +9,7 @@
   <meta name="theme-color" content="#0b0b16" />
   <title>Ember Chat</title>
 
-  <!-- Fonts (matches style.css aesthetic) -->
+  <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link
@@ -20,106 +20,45 @@
   <!-- Styles -->
   <link rel="stylesheet" href="./style.css" />
 
-  <!-- Favicons (optional; safe to remove if not used) -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ccircle cx=%2750%27 cy=%2750%27 r=%2744%27 fill=%27%238b5cf6%27/%3E%3Ctext x=%2750%27 y=%2758%27 font-size=%2750%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27Verdana%27%3E%E1%B4%87%3C/text%3E%3C/svg%3E" />
+  <!-- Favicons (optional) -->
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ccircle cx=%2750%27 cy=%2750%27 r=%2744%27 fill=%27%238b5cf6%27/%3E%3Ctext x=%2750%27 y=%2758%27 font-size=%2750%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27Verdana%27%3E%E1%B4%87%3C/text%3E%3C/svg%3E"
+  />
 
   <style>
-    /* Page-level tweaks that complement style.css without fighting it */
-    html {
-      scroll-behavior: smooth;
+    html { scroll-behavior: smooth; }
+    .container { width: min(1200px, 94vw); margin: 0 auto; }
+    .hero { padding: 3rem 0 1rem; }
+    .kicker { color: var(--text-secondary, #a1a1c1); letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.8rem; }
+    .cta-row { display:flex; gap:12px; flex-wrap:wrap; margin-top:1rem; }
+    .btn { appearance:none; border:none; border-radius:.75rem; padding:.65rem .9rem; font-weight:700; cursor:pointer; transition: transform .05s ease-out, filter .2s ease; }
+    .btn:active{ transform: translateY(1px); }
+    .btn-primary{ background:var(--accent,#8b5cf6); color:#fff; }
+    .btn-primary:hover{ filter:brightness(1.08); }
+    .btn-soft{ background:rgba(255,255,255,0.06); color:var(--text-primary,#e7e8ee); border:1px solid rgba(255,255,255,0.08); }
+    .section-title{ margin:0 0 .5rem; font-size:1.6rem; }
+    .muted{ color:var(--text-secondary,#a1a1c1); }
+    footer{ padding:24px 16px; text-align:center; color:var(--text-secondary,#a1a1c1); }
+    .status{ display:inline-flex; align-items:center; gap:8px; font-size:.9rem; color:var(--text-secondary,#a1a1c1); margin-top:8px; }
+    .dot{ width:10px; height:10px; border-radius:50%; background:#ef4444; box-shadow:0 0 10px rgba(239,68,68,.5); }
+    .note{ font-size:.9rem; color:var(--text-secondary,#a1a1c1); margin-top:6px; }
+    .chips{ display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+    .chip{ display:inline-flex; gap:8px; align-items:center; padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); color:var(--text-primary,#e7e8ee); font-size:.85rem; text-decoration:none; }
+    .chip:hover{ filter: brightness(1.08); }
+
+    /* Ensure avatar area has a visible size even if external CSS changes */
+    #scene-container {
+      width: 100%;
+      max-width: 100%;
+      height: 420px;           /* explicit height fixes “invisible canvas” */
+      min-height: 240px;
+      background: #0f0f1a;
+      border: 1px solid #222;
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
     }
-    .container {
-      width: min(1200px, 94vw);
-      margin: 0 auto;
-    }
-    .hero {
-      padding: 3rem 0 1rem;
-    }
-    .kicker {
-      color: var(--text-secondary, #a1a1c1);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      font-size: 0.8rem;
-    }
-    .cta-row {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-top: 1rem;
-    }
-    .btn {
-      appearance: none;
-      border: none;
-      border-radius: 0.75rem;
-      padding: 0.65rem 0.9rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: transform .05s ease-out, filter .2s ease;
-    }
-    .btn:active { transform: translateY(1px); }
-    .btn-primary {
-      background: var(--accent, #8b5cf6);
-      color: #fff;
-    }
-    .btn-primary:hover { filter: brightness(1.08); }
-    .btn-soft {
-      background: rgba(255,255,255,0.06);
-      color: var(--text-primary, #e7e8ee);
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-    .section-title {
-      margin: 0 0 .5rem;
-      font-size: 1.6rem;
-    }
-    .muted { color: var(--text-secondary, #a1a1c1); }
-    footer {
-      padding: 24px 16px;
-      text-align: center;
-      color: var(--text-secondary, #a1a1c1);
-    }
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: .9rem;
-      color: var(--text-secondary, #a1a1c1);
-      margin-top: 8px;
-    }
-    .dot {
-      width: 10px; height: 10px; border-radius: 50%;
-      background: #ef4444; /* red by default; JS can toggle */
-      box-shadow: 0 0 10px rgba(239,68,68,.5);
-    }
-    .note {
-      font-size: .9rem;
-      color: var(--text-secondary, #a1a1c1);
-      margin-top: 6px;
-    }
-    .split {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 24px;
-    }
-    @media (min-width: 960px) {
-      .split {
-        grid-template-columns: 1fr 1fr;
-        align-items: start;
-      }
-    }
-    /* Basic link chips */
-    .chips {
-      display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
-    }
-    .chip {
-      display: inline-flex; gap: 8px; align-items: center;
-      padding: 6px 10px; border-radius: 999px;
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.08);
-      color: var(--text-primary, #e7e8ee);
-      font-size: .85rem;
-      text-decoration: none;
-    }
-    .chip:hover { filter: brightness(1.08); }
   </style>
 </head>
 <body>
@@ -205,6 +144,12 @@
           or specify a custom query (the server decides how to use it).
         </p>
 
+        <!-- HTTPS note (mixed-content helper) -->
+        <div id="https-note" class="note" style="display:none;">
+          You are on <strong>HTTPS</strong>. Browsers block requests to <code>http://localhost:8000</code>.
+          Either run your API on HTTPS (e.g., via a local tunnel) or open this page locally (file://) while testing.
+        </div>
+
         <!-- API base control -->
         <div id="server" role="group" aria-labelledby="server-label">
           <label id="server-label" for="api-base" class="sr-only">API base URL</label>
@@ -250,7 +195,7 @@
           <button id="send" class="btn btn-primary" type="button">Send</button>
         </div>
 
-        <p class="note">Shortcut: press <strong>Enter</strong> to send.</p>
+        <p class="note">Shortcut: press <strong>Enter</strong> to send (Shift+Enter for newline).</p>
       </div>
     </section>
 
@@ -280,19 +225,54 @@
     </div>
   </noscript>
 
-  <!-- Scripts -->
-  <script src="https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.min.js"></script>
-  <script src="./main.js"></script>
+  <!-- Scripts (use defer so DOM is ready) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.min.js"></script>
 
-  <script>
-    // Lightweight status probe hooked to the hero "API status"
+  <!-- Inline fixes: Enter-to-send + HTTPS note + avatar fallback init guard -->
+  <script defer>
+    // Enter to send (keydown is reliable; keypress is deprecated in some browsers)
+    document.addEventListener('DOMContentLoaded', function () {
+      const msg = document.getElementById('message');
+      const send = document.getElementById('send');
+      if (msg && send) {
+        msg.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            send.click();
+          }
+        });
+      }
+
+      // HTTPS mixed-content helper
+      const httpsNote = document.getElementById('https-note');
+      if (location.protocol === 'https:') {
+        httpsNote.style.display = 'block';
+      }
+    });
+
+    // Ensure the avatar container has size (in case external CSS is missing)
+    document.addEventListener('DOMContentLoaded', function () {
+      const c = document.getElementById('scene-container');
+      if (c && (!c.style.height || c.clientHeight < 40)) {
+        c.style.height = '420px';
+      }
+    });
+  </script>
+
+  <!-- Your main client logic (defer = run after DOM ready and after Three.js) -->
+  <script defer src="./main.js"></script>
+
+  <!-- Lightweight status probe hooked to the hero "API status" -->
+  <script defer>
     (async function probe() {
       const dot = document.getElementById('api-dot');
       const label = document.getElementById('api-status');
       try {
-        const base = localStorage.getItem('api-base') ||
-                     localStorage.getItem('ember.apiBase') ||
-                     'http://localhost:8000';
+        const base =
+          new URLSearchParams(location.search).get('api') ||
+          localStorage.getItem('api-base') ||
+          localStorage.getItem('ember.apiBase') ||
+          'http://localhost:8000';
         const r = await fetch(base.replace(/\/+$/,'') + '/health', { method: 'GET' });
         if (r.ok) {
           dot.style.background = '#22c55e'; // green
