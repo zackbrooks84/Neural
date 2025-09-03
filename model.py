@@ -226,11 +226,23 @@ def try_compile(model: nn.Module) -> nn.Module:
     return model
 
 
-def compute_metrics(eval_preds):
-    import numpy as np
-    (loss,), _ = eval_preds
+def compute_metrics(eval_pred):
+    predictions, labels = eval_pred
+    # For causal LM, shift predictions and labels
+    shift_predictions = predictions[:, :-1, :]
+    shift_labels = labels[:, 1:]
+    # Flatten
+    shift_predictions = shift_predictions.reshape(-1, shift_predictions.shape[-1])
+    shift_labels = shift_labels.reshape(-1)
+    # Ignore index -100
+    mask = shift_labels != -100
+    shift_predictions = shift_predictions[mask]
+    shift_labels = shift_labels[mask]
+    # Compute loss
+    loss_fct = nn.CrossEntropyLoss()
+    loss = loss_fct(shift_predictions, shift_labels)
     try:
-        perplexity = float(math.exp(loss))
+        perplexity = math.exp(loss.item())
     except OverflowError:
         perplexity = float("inf")
     return {"perplexity": perplexity}
@@ -312,6 +324,7 @@ def train_pipeline(
         report_to=[],  # keep quiet; integrate wandb later if you want
         max_steps=max_steps,
         ddp_find_unused_parameters=False if torch.cuda.device_count() > 1 else None,
+        lr_scheduler_kwargs={"eta_min": lr * cosine_min_lr_ratio},  # Set min LR for cosine
     )
 
     callbacks = [
@@ -341,7 +354,7 @@ def train_pipeline(
         trainer.model.save_pretrained(os.path.join(save_dir, "lora_adapters"))
 
     metrics = trainer.evaluate()
-    metrics["train_runtime"] = round(trainer.state.train_runtime, 2)
+    metrics["train_runtime"] = round(trainer.state.total_flos / 1e12 if hasattr(trainer.state, "total_flos") else 0, 2)  # Approximate runtime if not available
     metrics["train_samples"] = trainer.state.max_steps * batch_size * grad_accum if trainer.state.max_steps > 0 else None
     with open(os.path.join(save_dir, "metrics.json"), "w") as f:
         json.dump(metrics, f, indent=2)
@@ -439,7 +452,7 @@ def main():
         text = generate_text(
             model, tokenizer,
             prompt=args.generate,
-            max_new_tokens=args.max-new if hasattr(args, "max-new") else 200,  # hyphen fix handled below
+            max_new_tokens=args.max_new if hasattr(args, "max_new") else 200,
             temperature=0.7, top_p=0.9, top_k=50, repetition_penalty=1.05
         )
         print(text)
@@ -484,11 +497,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # argparse treats '-' specially; map --max-new to safe attribute
-    # so users can pass --max-new on CLI and we still access args.max_new
-    import sys
-    # Patch argparse hyphenated param accessibility for convenience
-    for i, a in enumerate(sys.argv):
-        if a == "--max-new":
-            sys.argv[i] = "--max_new"
     main()
