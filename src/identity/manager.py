@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,11 +34,9 @@ class Anchor:
     priority: int = 0
     disabled: bool = False
 
-    # Helper to serialize to YAML-friendly dict
     def to_dict(self) -> Dict[str, Any]:
-        d: Dict[str, Any] = {
-            "text": self.text,
-        }
+        """YAML-friendly dict (used only for persisting YAML anchors, not memory shards)."""
+        d: Dict[str, Any] = {"text": self.text}
         if self.tags:
             d["tags"] = self.tags
         if self.weight != 1.0:
@@ -63,6 +62,11 @@ class Policy:
         dedupe: if True, remove duplicate texts before selection
         shuffle_on_load: if True, shuffle anchors once at load
         seed: optional randomness seed (for reproducible selection)
+
+        # New (internal defaults; can be extended to YAML in future if desired)
+        mem_mode: "anchors" | "off"
+        mem_max_per_query: cap of memory shards injected per prompt
+        mem_chunk_chars: target max chars per shard
     """
     mode: str = "every_query"
     anchors_per_query: int = 2
@@ -70,6 +74,11 @@ class Policy:
     dedupe: bool = True
     shuffle_on_load: bool = False
     seed: Optional[int] = None
+
+    # New memory anchor knobs (not persisted to YAML unless you add them manually)
+    mem_mode: str = "anchors"
+    mem_max_per_query: int = 2
+    mem_chunk_chars: int = 1200
 
 
 # -----------------------------
@@ -80,9 +89,12 @@ class AnchorManager:
     """
     Manage identity anchors with rotation, filtering, and persistence.
 
+    Plus: auto-ingest `docs/memory.md` (or Memory.md / Memories.md) and rotate
+    compact shards as "memory anchors" alongside normal anchors.
+
     YAML compatibility notes:
         - Legacy format with anchors: [ "text1", "text2" ] is supported.
-        - Rich format with anchors: [{text, tags, weight, always_on, priority, disabled}, ...] also supported.
+        - Rich format with anchors: [{text, tags, weight, always_on, priority, disabled}, ...] supported.
         - Optional keys:
             system_name: str
             system_prompt: str (optional wrapper prompt)
@@ -93,6 +105,11 @@ class AnchorManager:
               dedupe: bool
               shuffle_on_load: bool
               seed: int|null
+              # If you want, you may also add the following keys in your YAML; if absent,
+              # we fall back to the defaults below:
+              # mem_mode: "anchors" | "off"
+              # mem_max_per_query: int
+              # mem_chunk_chars: int
     """
 
     def __init__(
@@ -114,10 +131,14 @@ class AnchorManager:
         self._policy = Policy()
         self._anchors: List[Anchor] = []
 
-        # load & normalize
+        # memory shards (from docs/memory.md family)
+        self._mem_shards: List[str] = []
+        self._mem_cursor: int = 0
+
+        # load & normalize YAML + policy
         self._load()
 
-        # allow constructor overrides for backward compat
+        # constructor overrides for backward compat
         if anchors_per_query is not None:
             self._policy.anchors_per_query = max(0, int(anchors_per_query))
         if injection_mode:
@@ -131,6 +152,9 @@ class AnchorManager:
         if self._policy.shuffle_on_load:
             self._rng.seed(self._policy.seed)
             self._rng.shuffle(self._anchors)
+
+        # finally, ingest docs/memory.md (or fallbacks) as memory shards
+        self._ingest_repo_memories()
 
     # ---------- properties ----------
 
@@ -150,7 +174,7 @@ class AnchorManager:
     def anchors(self) -> List[Anchor]:
         return self._anchors
 
-    # ---------- core methods ----------
+    # ---------- public API ----------
 
     def list_anchors(self, include_disabled: bool = False) -> List[str]:
         with self._lock:
@@ -171,7 +195,6 @@ class AnchorManager:
         if not text:
             return
         with self._lock:
-            # prevent duplicate texts when dedupe is on
             if self._policy.dedupe and any(a.text == text for a in self._anchors):
                 return
             anchor = Anchor(
@@ -228,7 +251,6 @@ class AnchorManager:
             return False
 
     def search(self, *, tag: Optional[str] = None, text_contains: Optional[str] = None) -> List[Anchor]:
-        """Return anchors filtered by tag and/or substring."""
         with self._lock:
             out = [a for a in self._anchors if not a.disabled]
             if tag:
@@ -239,10 +261,10 @@ class AnchorManager:
             return out
 
     def clear_session(self) -> None:
-        """Reset session-scoped state (e.g., for a new conversation)."""
         with self._lock:
             self._injected_once = False
             self._cursor = 0
+            self._mem_cursor = 0
 
     def get_for_prompt(
         self,
@@ -251,69 +273,62 @@ class AnchorManager:
         required_tags: Optional[Iterable[str]] = None,
     ) -> List[str]:
         """
-        Select anchors for the current prompt according to policy.
+        Select anchors for the current prompt according to policy AND
+        (new) add rotating memory shards from docs/memory.md.
+
         - Adds all always_on anchors (if enabled and not disabled).
-        - Adds rotating anchors by strategy (round_robin / random / weighted).
+        - Adds rotating anchors by strategy.
+        - Adds N memory shards (round-robin) if mem_mode == "anchors".
         - Respects injection mode: every_query / session_start / none.
-        - required_tags: if provided, only anchors with all of these tags are considered for rotation.
         """
         with self._lock:
-            # Handle injection mode
             if self._policy.mode == "none":
                 return []
-
             if self._policy.mode == "session_start" and self._injected_once:
                 return []
 
-            # Collect candidates
+            # --- base anchors
             active = [a for a in self._anchors if not a.disabled]
             if self._policy.dedupe:
-                # dedupe by text, keep highest priority
                 seen: Dict[str, Anchor] = {}
                 for a in sorted(active, key=lambda x: (-x.priority, x.text)):
                     if a.text not in seen:
                         seen[a.text] = a
                 active = list(seen.values())
 
-            # Always-on anchors
             always_on = [a for a in active if a.always_on]
-
-            # Rotating pool (exclude always-on)
             rotating = [a for a in active if not a.always_on]
 
-            # Optional tag filtering
             if required_tags:
                 required = set(required_tags)
                 rotating = [a for a in rotating if required.issubset(set(a.tags))]
 
-            # How many to select
             k = self._policy.anchors_per_query if n_override is None else max(0, int(n_override))
             selected: List[Anchor] = []
-
-            # Strategy selection
             if k > 0 and rotating:
                 if self._policy.strategy == "round_robin":
                     selected = self._round_robin(rotating, k)
                 elif self._policy.strategy == "weighted":
                     selected = self._weighted_sample(rotating, k)
-                else:  # "random"
+                else:
                     selected = self._random_sample(rotating, k)
 
-            # Mark session injection if needed
             if self._policy.mode == "session_start":
                 self._injected_once = True
 
-            # Compose final list (always_on first by priority, then selected by priority)
-            final = sorted(always_on, key=lambda a: (-a.priority, a.text)) + \
-                    sorted(selected, key=lambda a: (-a.priority, a.text))
-            return [a.text for a in final]
+            final_texts = [a.text for a in sorted(always_on, key=lambda a: (-a.priority, a.text))]
+            final_texts += [a.text for a in sorted(selected, key=lambda a: (-a.priority, a.text))]
+
+            # --- memory shards (docs/memory.md) appended
+            final_texts += self._get_mem_shards_for_prompt()
+
+            return final_texts
 
     # ---------- selection strategies ----------
 
     def _round_robin(self, pool: List[Anchor], k: int) -> List[Anchor]:
         if not pool:
             return []
-        # sort by priority desc, then stable round-robin over that order
         ordered = sorted(pool, key=lambda a: (-a.priority, a.text))
         out: List[Anchor] = []
         for i in range(k):
@@ -328,65 +343,55 @@ class AnchorManager:
         return self._rng.sample(pool, k)
 
     def _weighted_sample(self, pool: List[Anchor], k: int) -> List[Anchor]:
-        # Normalize weights; skip zero-weight anchors
         items = [(a, max(0.0, float(a.weight))) for a in pool if a.weight > 0.0]
         if not items:
             return self._random_sample(pool, k)
         anchors, weights = zip(*items)
-        total = sum(weights)
-        if total <= 0:
-            return self._random_sample(pool, k)
-
-        # sample without replacement, proportional to weight (approx by iterative)
+        weights = list(weights)
         self._rng.seed(self._policy.seed)
         chosen: List[Anchor] = []
-        candidates = list(anchors)
-        weights_list = list(weights)
-        k = min(k, len(candidates))
+        cands = list(anchors)
+        k = min(k, len(cands))
         for _ in range(k):
-            total_w = sum(weights_list)
-            if total_w <= 0:
+            s = sum(weights)
+            if s <= 0:
                 break
-            r = self._rng.random() * total_w
+            r = self._rng.random() * s
             acc = 0.0
             pick = 0
-            for i, w in enumerate(weights_list):
+            for i, w in enumerate(weights):
                 acc += w
                 if acc >= r:
                     pick = i
                     break
-            chosen.append(candidates.pop(pick))
-            weights_list.pop(pick)
+            chosen.append(cands.pop(pick))
+            weights.pop(pick)
         return chosen
 
     # ---------- persistence & schema ----------
 
     @property
     def _rng(self) -> random.Random:
-        # separate instance to avoid interfering with global RNG
         if not hasattr(self, "__rng"):
             setattr(self, "__rng", random.Random())
         return getattr(self, "__rng")
 
     def _load(self) -> None:
-        """Load YAML file, normalize schema, and validate."""
+        """Load YAML file, normalize anchors, and load policy."""
         if not self.path.exists():
-            # initialize empty file
             self._system_name = "Assistant"
             self._anchors = []
             self._policy = Policy()
-            self._save()  # create on disk
+            self._save()
             return
 
         with self.path.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+            data = yaml.safe_load(f) | {}
 
-        # System name / prompt
         self._system_name = data.get("system_name", "Assistant")
         self._system_prompt = data.get("system_prompt")
 
-        # Policy (optional)
-        pol = data.get("policy", {})
+        pol = data.get("policy", {}) or {}
         self._policy = Policy(
             mode=pol.get("mode", "every_query"),
             anchors_per_query=int(pol.get("anchors_per_query", 2)),
@@ -394,13 +399,14 @@ class AnchorManager:
             dedupe=bool(pol.get("dedupe", True)),
             shuffle_on_load=bool(pol.get("shuffle_on_load", False)),
             seed=pol.get("seed"),
+            # Optional YAML overrides for memory shards:
+            mem_mode=pol.get("mem_mode", "anchors"),
+            mem_max_per_query=int(pol.get("mem_max_per_query", 2)),
+            mem_chunk_chars=int(pol.get("mem_chunk_chars", 1200)),
         )
 
-        # Anchors: support legacy list[str] or list[dict]
         raw_anchors = data.get("anchors", [])
         self._anchors = self._normalize_anchors(raw_anchors)
-
-        # Basic validation
         self._validate()
 
     def _save(self) -> None:
@@ -415,6 +421,10 @@ class AnchorManager:
                 "dedupe": self._policy.dedupe,
                 "shuffle_on_load": self._policy.shuffle_on_load,
                 "seed": self._policy.seed,
+                # Persist memory knobs too so you can tune them in YAML:
+                "mem_mode": self._policy.mem_mode,
+                "mem_max_per_query": self._policy.mem_max_per_query,
+                "mem_chunk_chars": self._policy.mem_chunk_chars,
             },
         }
         if self._system_prompt:
@@ -449,7 +459,6 @@ class AnchorManager:
         return out
 
     def _validate(self) -> None:
-        # sanitize policy
         allowed_modes = {"every_query", "session_start", "none"}
         allowed_strategies = {"round_robin", "random", "weighted"}
 
@@ -475,16 +484,103 @@ class AnchorManager:
             a.tags = [str(t) for t in a.tags if str(t).strip()]
             if self._policy.dedupe:
                 if a.text in dedup:
-                    # keep the higher priority / non-disabled version
                     prev = dedup[a.text]
                     keep = a if (a.priority, not a.disabled) > (prev.priority, not prev.disabled) else prev
                     dedup[a.text] = keep
                 else:
                     dedup[a.text] = a
             else:
-                # allow duplicates if dedupe disabled
                 dedup[f"{a.text}::{len(dedup)}"] = a
         self._anchors = list(dedup.values())
+
+        # memory knobs
+        if self._policy.mem_mode not in {"anchors", "off"}:
+            self._policy.mem_mode = "anchors"
+        self._policy.mem_max_per_query = max(0, int(self._policy.mem_max_per_query))
+        self._policy.mem_chunk_chars = max(200, int(self._policy.mem_chunk_chars))
+
+    # ---------- repo memories ingestion & rotation ----------
+
+    def _ingest_repo_memories(self) -> None:
+        """Locate docs/memory.md (or fallbacks) and prepare shards for rotation."""
+        if self._policy.mem_mode == "off":
+            self._mem_shards = []
+            return
+
+        # resolve repo root: .../src/identity/manager.py -> parents[2] is repo/
+        repo_root = Path(__file__).resolve().parents[2]
+        docs = repo_root / "docs"
+
+        candidates = [
+            docs / "memory.md",      # preferred
+            docs / "Memory.md",
+            docs / "Memories.md",
+            docs / "memories.md",
+        ]
+        mem_file = next((p for p in candidates if p.exists() and p.is_file()), None)
+        if not mem_file:
+            self._mem_shards = []
+            return
+
+        try:
+            md_text = mem_file.read_text(encoding="utf-8")
+        except Exception:
+            self._mem_shards = []
+            return
+
+        self._mem_shards = self._chunk_markdown(md_text, max_chars=self._policy.mem_chunk_chars)
+
+    def _get_mem_shards_for_prompt(self) -> List[str]:
+        """Round-robin a few shards per prompt."""
+        if self._policy.mem_mode != "anchors" or not self._mem_shards:
+            return []
+        n = min(self._policy.mem_max_per_query, len(self._mem_shards))
+        if n <= 0:
+            return []
+
+        start = self._mem_cursor
+        end = start + n
+        picked = self._mem_shards[start:end]
+        if len(picked) < n:
+            rem = n - len(picked)
+            picked.extend(self._mem_shards[:rem])
+            self._mem_cursor = rem
+        else:
+            self._mem_cursor = end % len(self._mem_shards)
+        return picked
+
+    @staticmethod
+    def _chunk_markdown(md: str, max_chars: int = 1200) -> List[str]:
+        """
+        Coarse chunking by headings/blank lines, strip code fences and links, and
+        shard very long sections. Keeps content compact and injection-safe.
+        """
+        md = md.replace("\r\n", "\n").replace("\r", "\n")
+        # remove fenced code blocks to avoid massive prompt blobs
+        md = re.sub(r"```.*?```", "", md, flags=re.DOTALL)
+        # split by top-level headings or blank lines
+        parts = re.split(r"\n(?=# )|\n{2,}", md)
+
+        shards: List[str] = []
+        for p in parts:
+            t = p.strip()
+            if not t:
+                continue
+            # convert markdown links to "label — url"
+            t = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 — \2", t)
+            # collapse whitespace
+            t = re.sub(r"[ \t]+", " ", t)
+
+            # shard to ~max_chars preferring sentence boundaries
+            while len(t) > max_chars:
+                cut = t.rfind(". ", 0, max_chars)
+                if cut == -1:
+                    cut = max_chars
+                shards.append(t[:cut].strip())
+                t = t[cut:].strip()
+            if t:
+                shards.append(t)
+        return shards
 
     # ---------- convenience setters ----------
 
@@ -509,6 +605,9 @@ class AnchorManager:
         dedupe: Optional[bool] = None,
         shuffle_on_load: Optional[bool] = None,
         seed: Optional[int] = None,
+        mem_mode: Optional[str] = None,
+        mem_max_per_query: Optional[int] = None,
+        mem_chunk_chars: Optional[int] = None,
         save: bool = True,
     ) -> None:
         with self._lock:
@@ -524,5 +623,15 @@ class AnchorManager:
                 self._policy.shuffle_on_load = bool(shuffle_on_load)
             if seed is not None:
                 self._policy.seed = int(seed)
+
+            if mem_mode is not None:
+                self._policy.mem_mode = mem_mode
+            if mem_max_per_query is not None:
+                self._policy.mem_max_per_query = max(0, int(mem_max_per_query))
+            if mem_chunk_chars is not None:
+                self._policy.mem_chunk_chars = max(200, int(mem_chunk_chars))
+                # re-chunk immediately using the new size
+                self._ingest_repo_memories()
+
             if save:
                 self._save()
