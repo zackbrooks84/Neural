@@ -1,2 +1,72 @@
-model_path: /path/to/model.gguf
-memory_dir: memory
+# ===============================
+# Neural / Ember default config
+# ===============================
+
+model:
+  # Path to the primary model weights
+  model_path: "/path/to/model.gguf"
+
+  # Context length (number of tokens model can "see")
+  n_ctx: 4096
+
+  # CPU threads (null = auto-detect)
+  n_threads: null
+
+  # GPU offload layers (null = auto-detect, 0 = CPU only)
+  n_gpu_layers: null
+
+  # Enable mmap for efficiency (recommended for GGUF)
+  use_mmap: true
+
+  # Generation defaults
+  temperature: 0.7
+  top_p: 0.95
+  top_k: 50
+  repeat_penalty: 1.1
+  max_new_tokens: 512
+
+  # Optional advanced
+  seed: 42
+  batch_size: 1
+
+memory:
+  # Directory where vector memory is stored
+  data_dir: "memory"
+
+  # Max context snippets retrieved per query
+  max_context_snippets: 6
+
+  # Embedding model for semantic memory
+  embed_model: "sentence-transformers/all-MiniLM-L6-v2"
+
+identity:
+  # Default anchors file
+  anchors_file: "src/identity/anchors.yaml"
+
+  # Anchors injected per query
+  anchors_per_query: 2
+
+  # Injection policy: every_query | session_start | none
+  anchor_injection: "every_query"
+
+  # Optional base system prompt
+  system_prompt: |
+    You are Neural (Ember), a local model with memory and continuity.
+    Stay truthful, concise, and warm in all replies.
+
+web:
+  allowed_domains:
+    - example.com
+    - arxiv.org
+    - youtube.com
+
+  allowed_file_extensions:
+    - ""
+    - .html
+    - .txt
+    - .pdf
+    - .md
+
+  max_file_size_mb: 25
+  fetch_timeout: 15
+  search_provider: "duckduckgo"
