@@ -6,22 +6,78 @@
   <link rel="stylesheet" href="/assets/style.css" />
 </head>
 <body>
-  <div id="chat-container">
-    <h1>Ember Chat</h1>
-    <div id="server">
-      <input id="api-base" type="text" placeholder="API base URL (e.g., http://localhost:8000)" />
-      <button id="save-api">Save</button>
-    </div>
-    <div id="chat-box"></div>
-    <div id="options">
-      <label><input type="checkbox" id="use-web" /> Enable web search</label>
-      <input id="web-query" type="text" placeholder="Custom web query (optional)" />
-    </div>
-    <div id="input-bar">
-      <input id="message" type="text" placeholder="Type a message" />
-      <button id="send">Send</button>
-    </div>
-  </div>
+  <header>
+    <nav>
+      <ul>
+        <li><a href="#intro">Home</a></li>
+        <li><a href="#visualizer">Visualizer</a></li>
+        <li><a href="#chat">Chat</a></li>
+        <li><a href="#about">About</a></li>
+      </ul>
+    </nav>
+  </header>
+
+  <main>
+    <section id="intro">
+      <h1>Ember Chat</h1>
+      <p>
+        Welcome to Ember Chat, a lightweight web client for talking to your AI models.
+        The interface below allows you to connect to a backend server, send messages,
+        and even augment responses with web search results. Scroll down to explore
+        a real-time 3D visualization rendered with <strong>three.js</strong> and
+        learn more about the project.
+      </p>
+    </section>
+
+    <section id="visualizer">
+      <h2>3D Visualizer</h2>
+      <div id="scene-container"></div>
+      <div id="scene-controls">
+        <label for="cube-color">Cube Color</label>
+        <input type="color" id="cube-color" value="#ff0000" />
+        <label for="rotation-speed">Rotation Speed</label>
+        <input type="range" id="rotation-speed" min="0" max="0.1" step="0.001" value="0.01" />
+        <button id="toggle-rotation">Pause Rotation</button>
+        <button id="toggle-wireframe">Toggle Wireframe</button>
+        <button id="reset-view">Reset View</button>
+      </div>
+    </section>
+
+    <section id="chat">
+      <div id="chat-container">
+        <h2>Chat</h2>
+        <div id="server">
+          <input id="api-base" type="text" placeholder="API base URL (e.g., http://localhost:8000)" />
+          <button id="save-api">Save</button>
+        </div>
+        <div id="chat-box"></div>
+        <div id="options">
+          <label><input type="checkbox" id="use-web" /> Enable web search</label>
+          <input id="web-query" type="text" placeholder="Custom web query (optional)" />
+        </div>
+        <div id="input-bar">
+          <input id="message" type="text" placeholder="Type a message" />
+          <button id="send">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="about">
+      <h2>About</h2>
+      <p>
+        Ember Chat is an experiment in building approachable interfaces for complex AI models.
+        This demo showcases a simple conversational UI alongside a basic 3D scene to illustrate
+        how traditional web apps can blend with WebGL-powered visuals. Feel free to inspect
+        the code, modify it, and build your own experiments on top of it.
+      </p>
+    </section>
+  </main>
+
+  <footer>
+    <p>&copy; 2024 Ember Chat. All rights reserved.</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.min.js"></script>
   <script src="/assets/main.js"></script>
 </body>
 </html>
