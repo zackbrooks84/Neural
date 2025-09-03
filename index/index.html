@@ -2,12 +2,131 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover"
+  />
+  <meta name="theme-color" content="#0b0b16" />
   <title>Ember Chat</title>
+
+  <!-- Fonts (matches style.css aesthetic) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500&display=swap"
+    rel="stylesheet"
+  />
+
+  <!-- Styles -->
   <link rel="stylesheet" href="./style.css" />
+
+  <!-- Favicons (optional; safe to remove if not used) -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ccircle cx=%2750%27 cy=%2750%27 r=%2744%27 fill=%27%238b5cf6%27/%3E%3Ctext x=%2750%27 y=%2758%27 font-size=%2750%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27Verdana%27%3E%E1%B4%87%3C/text%3E%3C/svg%3E" />
+
+  <style>
+    /* Page-level tweaks that complement style.css without fighting it */
+    html {
+      scroll-behavior: smooth;
+    }
+    .container {
+      width: min(1200px, 94vw);
+      margin: 0 auto;
+    }
+    .hero {
+      padding: 3rem 0 1rem;
+    }
+    .kicker {
+      color: var(--text-secondary, #a1a1c1);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-size: 0.8rem;
+    }
+    .cta-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+    .btn {
+      appearance: none;
+      border: none;
+      border-radius: 0.75rem;
+      padding: 0.65rem 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform .05s ease-out, filter .2s ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: var(--accent, #8b5cf6);
+      color: #fff;
+    }
+    .btn-primary:hover { filter: brightness(1.08); }
+    .btn-soft {
+      background: rgba(255,255,255,0.06);
+      color: var(--text-primary, #e7e8ee);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .section-title {
+      margin: 0 0 .5rem;
+      font-size: 1.6rem;
+    }
+    .muted { color: var(--text-secondary, #a1a1c1); }
+    footer {
+      padding: 24px 16px;
+      text-align: center;
+      color: var(--text-secondary, #a1a1c1);
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .9rem;
+      color: var(--text-secondary, #a1a1c1);
+      margin-top: 8px;
+    }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #ef4444; /* red by default; JS can toggle */
+      box-shadow: 0 0 10px rgba(239,68,68,.5);
+    }
+    .note {
+      font-size: .9rem;
+      color: var(--text-secondary, #a1a1c1);
+      margin-top: 6px;
+    }
+    .split {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 24px;
+    }
+    @media (min-width: 960px) {
+      .split {
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+      }
+    }
+    /* Basic link chips */
+    .chips {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+    }
+    .chip {
+      display: inline-flex; gap: 8px; align-items: center;
+      padding: 6px 10px; border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.08);
+      color: var(--text-primary, #e7e8ee);
+      font-size: .85rem;
+      text-decoration: none;
+    }
+    .chip:hover { filter: brightness(1.08); }
+  </style>
 </head>
 <body>
+  <a href="#main" class="sr-only">Skip to content</a>
+
   <header>
-    <nav>
+    <nav class="container" aria-label="Primary">
       <ul>
         <li><a href="#intro">Home</a></li>
         <li><a href="#visualizer">Visualizer</a></li>
@@ -17,58 +136,136 @@
     </nav>
   </header>
 
-  <main>
-    <section id="intro">
-      <h1>Ember Chat</h1>
-      <p>
-        Welcome to Ember Chat, a lightweight web client for talking to your AI models.
-        The interface below allows you to connect to a backend server, send messages,
-        and even augment responses with web search results. Scroll down to explore
-        a real-time 3D visualization rendered with <strong>three.js</strong> and
-        learn more about the project.
+  <main id="main" class="container">
+    <!-- Intro / Hero -->
+    <section id="intro" class="hero" aria-labelledby="intro-title">
+      <p class="kicker">Neural • Ember</p>
+      <h1 id="intro-title" style="margin:.25rem 0 0.5rem;">Ember Chat</h1>
+      <p class="muted" style="max-width: 70ch;">
+        Welcome to Ember Chat — a lightweight web client for talking to your local AI.
+        Connect to your backend server, send messages, and optionally augment replies
+        with web search. Below you’ll find a real-time 3D visualizer (powered by
+        <strong>three.js</strong>), and a polished chat interface.
       </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#chat">Open Chat</a>
+        <a class="btn btn-soft" href="#visualizer">See Visualizer</a>
+      </div>
+      <div class="chips" aria-label="Quick links">
+        <a class="chip" href="#about" title="Learn more">About</a>
+        <a class="chip" href="https://github.com/" target="_blank" rel="noreferrer">GitHub</a>
+        <span class="status" aria-live="polite">
+          <span class="dot" id="api-dot" aria-hidden="true"></span>
+          <span>API status: <strong id="api-status">Unknown</strong></span>
+        </span>
+      </div>
+      <p class="note">Tip: configure your API base in the Chat section, then hit “Save”.</p>
     </section>
 
-    <section id="visualizer">
-      <h2>3D Visualizer</h2>
-      <div id="scene-container"></div>
-      <div id="scene-controls">
+    <!-- Visualizer -->
+    <section id="visualizer" aria-labelledby="viz-title">
+      <h2 id="viz-title" class="section-title">3D Visualizer</h2>
+      <p class="muted" style="max-width: 70ch;">
+        A simple animated scene you can tweak. Change color, play with rotation,
+        toggle wireframe, and reset the camera.
+      </p>
+
+      <div id="scene-container" role="img" aria-label="Interactive 3D scene"></div>
+
+      <div id="scene-controls" aria-label="Visualizer controls">
         <label for="cube-color">Cube Color</label>
-        <input type="color" id="cube-color" value="#ff0000" />
+        <input type="color" id="cube-color" value="#ff0000" aria-label="Cube color" />
+
         <label for="rotation-speed">Rotation Speed</label>
-        <input type="range" id="rotation-speed" min="0" max="0.1" step="0.001" value="0.01" />
-        <button id="toggle-rotation">Pause Rotation</button>
-        <button id="toggle-wireframe">Toggle Wireframe</button>
-        <button id="reset-view">Reset View</button>
+        <input
+          type="range"
+          id="rotation-speed"
+          min="0" max="0.1" step="0.001" value="0.01"
+          aria-label="Rotation speed"
+        />
+
+        <button id="toggle-rotation" class="btn btn-soft" type="button" aria-pressed="true">
+          Pause Rotation
+        </button>
+        <button id="toggle-wireframe" class="btn btn-soft" type="button">
+          Toggle Wireframe
+        </button>
+        <button id="reset-view" class="btn btn-soft" type="button">
+          Reset View
+        </button>
       </div>
     </section>
 
-    <section id="chat">
-      <div id="chat-container">
-        <h2>Chat</h2>
-        <div id="server">
-          <input id="api-base" type="text" placeholder="API base URL (e.g., http://localhost:8000)" />
-          <button id="save-api">Save</button>
+    <!-- Chat -->
+    <section id="chat" aria-labelledby="chat-title">
+      <div id="chat-container" aria-live="polite">
+        <h2 id="chat-title" class="section-title">Chat</h2>
+        <p class="muted" style="margin-top:-4px; max-width: 70ch;">
+          Point this client at your local API, then start chatting. You can enable optional web search,
+          or specify a custom query (the server decides how to use it).
+        </p>
+
+        <!-- API base control -->
+        <div id="server" role="group" aria-labelledby="server-label">
+          <label id="server-label" for="api-base" class="sr-only">API base URL</label>
+          <input
+            id="api-base"
+            type="text"
+            inputmode="url"
+            placeholder="API base URL (e.g., http://localhost:8000)"
+            aria-describedby="api-help"
+          />
+          <button id="save-api" class="btn btn-primary" type="button">Save</button>
         </div>
-        <div id="chat-box"></div>
-        <div id="options">
-          <label><input type="checkbox" id="use-web" /> Enable web search</label>
-          <input id="web-query" type="text" placeholder="Custom web query (optional)" />
+        <div id="api-help" class="note">
+          This is where requests are sent. The value is stored locally in your browser.
         </div>
+
+        <!-- Messages -->
+        <div id="chat-box" aria-label="Conversation transcript"></div>
+
+        <!-- Options -->
+        <div id="options" role="group" aria-label="Augmentation">
+          <label for="use-web" style="display:inline-flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="use-web" /> Enable web search
+          </label>
+          <input
+            id="web-query"
+            type="text"
+            placeholder="Custom web query (optional)"
+            aria-label="Custom web query"
+          />
+        </div>
+
+        <!-- Input bar -->
         <div id="input-bar">
-          <input id="message" type="text" placeholder="Type a message" />
-          <button id="send">Send</button>
+          <label class="sr-only" for="message">Your message</label>
+          <input
+            id="message"
+            type="text"
+            placeholder="Type a message"
+            aria-label="Message"
+            autocomplete="off"
+          />
+          <button id="send" class="btn btn-primary" type="button">Send</button>
         </div>
+
+        <p class="note">Shortcut: press <strong>Enter</strong> to send.</p>
       </div>
     </section>
 
-    <section id="about">
-      <h2>About</h2>
-      <p>
-        Ember Chat is an experiment in building approachable interfaces for complex AI models.
-        This demo showcases a simple conversational UI alongside a basic 3D scene to illustrate
-        how traditional web apps can blend with WebGL-powered visuals. Feel free to inspect
-        the code, modify it, and build your own experiments on top of it.
+    <!-- About -->
+    <section id="about" aria-labelledby="about-title">
+      <h2 id="about-title" class="section-title">About</h2>
+      <p class="muted" style="max-width: 70ch;">
+        Ember Chat is an experiment in approachable interfaces for local AI models.
+        This page blends a simple conversational UI with a WebGL visualizer to show
+        how traditional web apps and GPU graphics can complement each other.
+      </p>
+      <p class="muted" style="max-width: 70ch;">
+        The chat client stores history locally in your browser, and the API base URL
+        you set is also saved locally. No third-party services are required unless
+        you enable web search on the server side.
       </p>
     </section>
   </main>
@@ -77,7 +274,41 @@
     <p>&copy; 2024 Ember Chat. All rights reserved.</p>
   </footer>
 
+  <noscript>
+    <div style="padding:12px; text-align:center; color:#fca5a5;">
+      JavaScript is disabled. Enable it to use the visualizer and chat client.
+    </div>
+  </noscript>
+
+  <!-- Scripts -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.min.js"></script>
   <script src="./main.js"></script>
+
+  <script>
+    // Lightweight status probe hooked to the hero "API status"
+    (async function probe() {
+      const dot = document.getElementById('api-dot');
+      const label = document.getElementById('api-status');
+      try {
+        const base = localStorage.getItem('api-base') ||
+                     localStorage.getItem('ember.apiBase') ||
+                     'http://localhost:8000';
+        const r = await fetch(base.replace(/\/+$/,'') + '/health', { method: 'GET' });
+        if (r.ok) {
+          dot.style.background = '#22c55e'; // green
+          dot.style.boxShadow = '0 0 10px rgba(34,197,94,.6)';
+          label.textContent = 'Available';
+        } else {
+          dot.style.background = '#f59e0b'; // amber
+          dot.style.boxShadow = '0 0 10px rgba(245,158,11,.6)';
+          label.textContent = 'Unresponsive';
+        }
+      } catch {
+        dot.style.background = '#ef4444'; // red
+        dot.style.boxShadow = '0 0 10px rgba(239,68,68,.6)';
+        label.textContent = 'Offline';
+      }
+    })();
+  </script>
 </body>
 </html>
