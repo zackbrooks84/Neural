@@ -20,7 +20,7 @@
   <!-- Styles -->
   <link rel="stylesheet" href="./style.css" />
 
-  <!-- Favicons (optional) -->
+  <!-- Favicon (optional) -->
   <link
     rel="icon"
     href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ccircle cx=%2750%27 cy=%2750%27 r=%2744%27 fill=%27%238b5cf6%27/%3E%3Ctext x=%2750%27 y=%2758%27 font-size=%2750%27 text-anchor=%27middle%27 fill=%27white%27 font-family=%27Verdana%27%3E%E1%B4%87%3C/text%3E%3C/svg%3E"
@@ -47,7 +47,7 @@
     .chip{ display:inline-flex; gap:8px; align-items:center; padding:6px 10px; border-radius:999px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); color:var(--text-primary,#e7e8ee); font-size:.85rem; text-decoration:none; }
     .chip:hover{ filter: brightness(1.08); }
 
-    /* Ensure avatar area has a visible size even if external CSS changes */
+    /* Ensure avatar area has size even if external CSS changes */
     #scene-container {
       width: 100%;
       max-width: 100%;
@@ -58,6 +58,19 @@
       border-radius: 12px;
       overflow: hidden;
       position: relative;
+    }
+
+    /* Small inline styles for mode selector row */
+    #mode-row {
+      display:flex; gap:10px; align-items:center; margin:10px 0 6px;
+      color: var(--text-secondary, #a1a1c1);
+    }
+    #mode-select {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: rgba(20,20,30,0.7);
+      color: #e7e8ee;
     }
   </style>
 </head>
@@ -140,14 +153,24 @@
       <div id="chat-container" aria-live="polite">
         <h2 id="chat-title" class="section-title">Chat</h2>
         <p class="muted" style="margin-top:-4px; max-width: 70ch;">
-          Point this client at your local API, then start chatting. You can enable optional web search,
-          or specify a custom query (the server decides how to use it).
+          Point this client at your local API, then start chatting. If your API isn’t reachable
+          (e.g., on GitHub Pages over HTTPS), you can switch to the in-browser model.
         </p>
+
+        <!-- Mode picker (works with main.js) -->
+        <div id="mode-row">
+          <label for="mode-select">Mode:</label>
+          <select id="mode-select" aria-label="Chat mode">
+            <option value="auto" selected>Auto (API → Browser)</option>
+            <option value="api">API only</option>
+            <option value="webllm">Browser (WebLLM) only</option>
+          </select>
+        </div>
 
         <!-- HTTPS note (mixed-content helper) -->
         <div id="https-note" class="note" style="display:none;">
           You are on <strong>HTTPS</strong>. Browsers block requests to <code>http://localhost:8000</code>.
-          Either run your API on HTTPS (e.g., via a local tunnel) or open this page locally (file://) while testing.
+          Use the “Browser (WebLLM) only” mode, run your API with HTTPS, or test locally (file://).
         </div>
 
         <!-- API base control -->
@@ -225,13 +248,16 @@
     </div>
   </noscript>
 
-  <!-- Scripts (use defer so DOM is ready) -->
+  <!-- Scripts (defer so DOM is ready) -->
   <script defer src="https://cdn.jsdelivr.net/npm/three@0.156.1/build/three.min.js"></script>
 
-  <!-- Inline fixes: Enter-to-send + HTTPS note + avatar fallback init guard -->
+  <!-- WebLLM (browser model) — required for “Browser only” and Auto fallback -->
+  <script defer src="https://unpkg.com/@mlc-ai/web-llm@0.2.70/dist/index.min.js"></script>
+
+  <!-- Inline fixes: Enter-to-send + HTTPS note + avatar size guard -->
   <script defer>
-    // Enter to send (keydown is reliable; keypress is deprecated in some browsers)
     document.addEventListener('DOMContentLoaded', function () {
+      // Enter to send (keydown is reliable across browsers)
       const msg = document.getElementById('message');
       const send = document.getElementById('send');
       if (msg && send) {
@@ -243,15 +269,13 @@
         });
       }
 
-      // HTTPS mixed-content helper
+      // HTTPS mixed-content helper (show only if on https)
       const httpsNote = document.getElementById('https-note');
       if (location.protocol === 'https:') {
         httpsNote.style.display = 'block';
       }
-    });
 
-    // Ensure the avatar container has size (in case external CSS is missing)
-    document.addEventListener('DOMContentLoaded', function () {
+      // Ensure avatar container has a height even if CSS fails to load
       const c = document.getElementById('scene-container');
       if (c && (!c.style.height || c.clientHeight < 40)) {
         c.style.height = '420px';
@@ -259,10 +283,10 @@
     });
   </script>
 
-  <!-- Your main client logic (defer = run after DOM ready and after Three.js) -->
+  <!-- Main client logic (after Three.js & WebLLM) -->
   <script defer src="./main.js"></script>
 
-  <!-- Lightweight status probe hooked to the hero "API status" -->
+  <!-- Lightweight status probe for the hero “API status” -->
   <script defer>
     (async function probe() {
       const dot = document.getElementById('api-dot');
